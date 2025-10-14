@@ -1,4 +1,4 @@
-module(
+module fetch(
     input clk, rst_n,
     input [31:0] new_pc,
     input [31:0] i_imem_rdata,
