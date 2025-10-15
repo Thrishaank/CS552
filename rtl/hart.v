@@ -131,6 +131,7 @@ module hart #(
 `endif
 );
     // Fill in your implementation here.
+/*
 //////////////////////RF IMPLEMENTATION FOR TESTBENCH////////////////////////
 module rf (
     input  wire        i_clk,
@@ -163,7 +164,7 @@ module rf (
     assign o_rdata2 = (i_raddr2 == 5'd0) ? 32'b0 : mem[i_raddr2];
 endmodule
 //////////////////////////////////////////////////////////////////////////////
-
+*/
     // =========================
     // PC + Register File
     // =========================
@@ -202,14 +203,22 @@ end
 	//Force zero if index=0, else read he register file array
     wire [31:0] rs1_val = (rs1 == 5'd0) ? 32'd0 : x[rs1];
     wire [31:0] rs2_val = (rs2 == 5'd0) ? 32'd0 : x[rs2];
+    wire [5:0] imm_format = 
+	    ((opcode == 7'b0010011) ||  
+	    (opcode  == 7'b0000011) ||
+    	    (opcode == 7'b1100111)) ?
+	    6'b000010 :
+	    (opcode == 7'b0100011) ? 6'b000100 :
+	    (opcode == 7'b1100011) ? 6'b001000 :
+	    ((opcode == 7'b0110111) ||
+	    (opcode == 7'b0010111)) ?
+	    6'b010000 :
+	    (opcode == 7'b1101111) ? 6'b100000 :
+	    6'b000001;
 
-    // Immediates (concat sign-extend)
-    wire [31:0] imm_i = {{20{instr[31]}}, instr[31:20]}; //I-type ImmGen
-    wire [31:0] imm_s = {{20{instr[31]}}, instr[31:25], instr[11:7]}; //S-type ImmGen
-    wire [31:0] imm_b = {{19{instr[31]}}, instr[31], instr[7], instr[30:25], instr[11:8], 1'b0}; //B-type ImmGen
-    wire [31:0] imm_u = {instr[31:12], 12'b0}; //U-type ImmGen
-    wire [31:0] imm_j = {{11{instr[31]}}, instr[31], instr[19:12], instr[20], instr[30:21], 1'b0}; //J-type ImmGen
-
+	   wire immediate;
+    imm iIMM1(.i_inst(instr), .i_format(imm_format), .o_immediate(immediate));
+/*
     // Instruction Class 
 	//[3.1. Register Arithmetic Instructions]
     wire is_op     = (opcode == 7'b0110011); 
@@ -232,124 +241,60 @@ end
     wire is_ebreak = is_system &&
                      (instr[31:20] == 12'h001) &&
                      (funct3 == 3'b000) && (rs1 == 5'd0) && (rd == 5'd0);
-					 
+*/					 
 					 
     // =========================
     // ALU implementation
     // =========================
 	
-	//Named constants for every ALUop.
-    localparam ALU_ADD=4'd0, ALU_SUB=4'd1, ALU_SLT=4'd2, ALU_SLTU=4'd3,
-               ALU_XOR=4'd4, ALU_OR =4'd5, ALU_AND =4'd6,
-               ALU_SLL=4'd7, ALU_SRL=4'd8, ALU_SRA =4'd9, ALU_PASS=4'd15;
-
     reg [3:0]  alu_op; //selected operand
     reg [31:0] alu_a, alu_b; //operands
     reg [31:0] alu_y; //result
 
-    always @* begin
-        // defaults
         alu_a  = rs1_val;
-        alu_b  = rs2_val;
-        alu_op = ALU_ADD;
+        alu_b  = (opcode == 7'b0110011) ? rs2_val : immediate;
 
-	//RISC-V uses funct3 and the bit 30 (func7[5]) of the instruction to distinguish ops:
-        if (is_op) begin
-            case ({funct7[5],funct3})
-                4'b0_000: alu_op = ALU_ADD; 
-                4'b1_000: alu_op = ALU_SUB; 
-                4'b0_100: alu_op = ALU_XOR;
-                4'b0_110: alu_op = ALU_OR;
-                4'b0_111: alu_op = ALU_AND;
-                4'b0_001: alu_op = ALU_SLL;
-                4'b0_101: alu_op = ALU_SRL;
-                4'b1_101: alu_op = ALU_SRA;
-                4'b0_010: alu_op = ALU_SLT;
-                4'b0_011: alu_op = ALU_SLTU;
-                default:  alu_op = ALU_ADD;
-            endcase
-		//Immediate goes in alu_b:
-        end
-		else if (is_opimm) begin
-            case (funct3)
-                3'b000: begin alu_op=ALU_ADD;  alu_b=imm_i; end // ADDI
-                3'b100: begin alu_op=ALU_XOR;  alu_b=imm_i; end // XORI
-                3'b110: begin alu_op=ALU_OR;   alu_b=imm_i; end // ORI
-                3'b111: begin alu_op=ALU_AND;  alu_b=imm_i; end // ANDI
-                3'b010: begin alu_op=ALU_SLT;  alu_b=imm_i; end // SLTI
-                3'b011: begin alu_op=ALU_SLTU; alu_b=imm_i; end // SLTIU
-                3'b001: begin alu_op=ALU_SLL;  alu_b={27'b0,instr[24:20]}; end // SLLI
-		// SRLI/SRAI - Shifts use the shamt (instr[24:20]), so alu_b = {27'b0, instr[24:20]}.
-                3'b101: begin alu_op=(instr[30]?ALU_SRA:ALU_SRL); alu_b={27'b0,instr[24:20]}; end           
-                default: begin alu_op=ALU_ADD; alu_b=imm_i; end
-            endcase			
-        end
-		else if (is_load)  	   begin alu_op=ALU_ADD; alu_b=imm_i; end //Loads: rs1 + imm_i
-        else if (is_store)     begin alu_op=ALU_ADD; alu_b=imm_s; end //Stores: rs1 + imm_s
-        else if (is_auipc)     begin alu_op=ALU_ADD; alu_a=pc_q;  alu_b=imm_u; end //AUIPC: pc + imm_u
-        else if (is_lui)       begin alu_op=ALU_PASS; alu_a=imm_u; alu_b=32'd0; end //LUI: just place imm_u in rd
-    end
-	
-	//EXECUTION
-    always @* begin
-        case (alu_op)
-            ALU_ADD:  alu_y = alu_a + alu_b;
-            ALU_SUB:  alu_y = alu_a - alu_b;
-            ALU_XOR:  alu_y = alu_a ^ alu_b;
-            ALU_OR :  alu_y = alu_a | alu_b;
-            ALU_AND:  alu_y = alu_a & alu_b;
-            ALU_SLL:  alu_y = alu_a <<  alu_b[4:0];
-            ALU_SRL:  alu_y = alu_a >>  alu_b[4:0];
-            ALU_SRA:  alu_y = $signed(alu_a) >>> alu_b[4:0];
-            ALU_SLT:  alu_y = {31'b0, ($signed(alu_a) <  $signed(alu_b))};
-            ALU_SLTU: alu_y = {31'b0, (alu_a < alu_b)};
-            default:  alu_y = alu_a;
-        endcase
-    end
-	
-	
+	alu iALU1(.i_opsel(funct3), .i_sub(funct7[5]), .i_unsigned(funct3[0]), 
+		.i_arith(funct7[5]), .i_op1(alu_a), .i_op2(alu_b), .o_result(alu_y), 
+		.o_eq(beq), .o_slt(blt));
+        		
     // =========================
     // Branch / Next PC
     // =========================
 	
-	//BEQ/BNE use equality.
-    wire beq  = (rs1_val == rs2_val);
-    wire bne  = (rs1_val != rs2_val);
-	//BLT/BGE are signed compares
-    wire blt  = ($signed(rs1_val) <  $signed(rs2_val));
-    wire bge  = ($signed(rs1_val) >= $signed(rs2_val));
-	//BLTU/BGEU are unsigned compares
-    wire bltu = (rs1_val <  rs2_val);
-    wire bgeu = (rs1_val >= rs2_val);
-
+    wire beq;
+    wire blt;
+    wire zero;
+    assign zero = ~|(alu_y);
 	//Branch to respective operations
-    reg take_branch;
-    always @* begin
-        take_branch = 1'b0;
-        if (is_branch) begin
-            case (funct3)
-                3'b000: take_branch = beq;
-                3'b001: take_branch = bne;
-                3'b100: take_branch = blt;
-                3'b101: take_branch = bge;
-                3'b110: take_branch = bltu;
-                3'b111: take_branch = bgeu;
-                default: take_branch = 1'b0;
-            endcase
-        end
-    end
+    /*
+    reg take_branch = is_branch ? 
+	    {
+	    (funct3 == 3'b000) ? beq :
+	    (funct3 == 3'b001) ? bne :
+	    (funct3 == 3'b100 ? blt :
+	    (funct3 == 3'b101) ? bge :
+	    (funct3 == 3'b110) ? bltu :
+	    (funct3 == 3'b111) ? bgeu :
+	    1'b0
+	    } :
+	    1'b0;
+    */
+
 
     wire [31:0] pc_plus4 = pc_q + 32'd4; //increment PC
+    /*
     wire [31:0] jal_tgt  = pc_q + imm_j; //JAL target
     wire [31:0] br_tgt   = pc_q + imm_b; //branch target
     wire [31:0] jalr_tgt = { (rs1_val + imm_i)[31:1], 1'b0 }; //JALR target
-
+    */
 	//PC MUX PRIORITY: JAL -> JALR -> default -> PC_INCREMENT
+    /*
     wire [31:0] next_pc_comb =
         is_jal  ? jal_tgt  :
         is_jalr ? jalr_tgt :
         take_branch ? br_tgt : pc_plus4;
-
+    */
 
     // =========================
     // DMEM (mask/address generation)
