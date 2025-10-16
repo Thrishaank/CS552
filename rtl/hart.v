@@ -157,7 +157,7 @@ rf rf (.i_clk(i_clk), .i_rst(i_rst), .i_we(rf_we), .i_waddr(rf_waddr), .i_wdata(
 // =========================
 // Fetch / Decode fields
 // =========================
-
+/* Placeholder fetch */
 wire [31:0] instr  = i_imem_rdata; //fetched from IMEM
 wire [6:0]  opcode = instr[6:0]; 
 wire [2:0]  funct3 = instr[14:12]; //sub-op selector
@@ -183,19 +183,18 @@ wire [5:0] imm_format =
 	6'b000001; //R Type
 wire [31:0] immediate; // Immediate value
 imm iIMM1(.i_inst(instr), .i_format(imm_format), .o_immediate(immediate));
-				 
+			 
 // =========================
 // ALU implementation
 // =========================
 
-reg [3:0]  alu_op; //selected operand
 reg [31:0] alu_a, alu_b; //operands
 reg [31:0] alu_y; //result
 
 alu_a  = rs1_val;
 alu_b  = (opcode == 7'b0110011) ? rs2_val : immediate; // If R type, use RS2 val, else use IMM.
 
-alu iALU1(.i_opsel(funct3), .i_sub(funct7[5]), .i_unsigned(funct3[0]), 
+alu iALU1(.i_opsel(), .i_sub(funct7[5]), .i_unsigned(funct3[0]), 
 	.i_arith(funct7[5]), .i_op1(alu_a), .i_op4(alu_b), .o_result(alu_y), 
 	.o_eq(beq), .o_slt(blt));
 		

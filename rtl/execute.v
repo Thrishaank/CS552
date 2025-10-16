@@ -19,6 +19,12 @@ module execute (
     assign new_pc = (reg_jump) ? {alu_result[31:1], 1'b0} : pc_plus_offset;
 
     //TODO: Implement rest of ALU logic here
+wire immVal; 
+assign immVal = (imm_alu) ? imm : reg_out_2;
+alu iALU1(.i_opsel(i_opsel), .i_sub(i_sub), .i_unsigned(i_unsigned), .i_arith(i_arith),
+	.i_op1(reg_out_1), .i_op2(immVal), .o_result(alu_result), .o_seq(eq), .o_slt(lt));
 
-    
+wire zero;
+assign zero = ~|alu_result;
+
 endmodule
