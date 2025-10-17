@@ -18,12 +18,12 @@ assign o_dmem_wen   = mem_write;
 
 // Calculate mask based on lowest 2 bits of address
 assign o_dmem_mask = is_word
-    ? 4'b1111 // If word
-    : is_h_or_b
-        ? address[1] // If half-word
-            ? 4'b1100
-            : 4'b0011
-        : address[1:0] == 2'b00 // If byte
+    ? 4'b1111 // Is word, need all bits
+    : is_h_or_b // Check if half-word or byte
+        ? address[1] // Is half word, check which half of word we are dealing with 
+            ? 4'b1100 
+            : 4'b0011 
+        : address[1:0] == 2'b00 // Is byte, figure out correct bit to mask
             ? 4'b0001
             : address[1:0] == 2'b01
                 ? 4'b0010
