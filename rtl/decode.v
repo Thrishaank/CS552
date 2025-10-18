@@ -51,14 +51,6 @@ module decode(
     localparam AUIPC     = 7'b0010111; 
 
 
-    wire invalid_funct3 = (is_load  & (funct3 > 3'b101)) |
-                          (is_s     & (funct3 > 3'b010)) |
-                          (is_b     & (funct3 = 3'b010) |(funct3 = 3'b011) ) |
-                          (is_r     & (~(funct3 inside {3'b000,3'b001,3'b010,3'b011,3'b100,3'b101,3'b110,3'b111})));
-
-    assign decode_trap = ~(is_r | is_i | is_s | is_b | is_u | is_j) | (invalid_funct3);
-
-
     assign rs1_addr = instruction[19:15];
     assign rs2_addr = instruction[24:20];
     assign rd_addr = instruction[11:7];
@@ -73,6 +65,13 @@ module decode(
     assign is_auipc  = (opcode == AUIPC);
     assign is_u = (is_lui | is_auipc);
     assign is_j = (opcode[2:0] == J_LOWER_3 && opcode[6:4] == J_UPPER_3);
+
+    wire invalid_funct3 = (is_load  & (funct3 > 3'b101)) |
+                          (is_s     & (funct3 > 3'b010)) |
+                          (is_b     & ((funct3 = 3'b010) |(funct3 = 3'b011)) ) |
+                          (is_r     & (~(funct3 inside {3'b000,3'b001,3'b010,3'b011,3'b100,3'b101,3'b110,3'b111})));
+
+    assign decode_trap = ~(is_r | is_i | is_s | is_b | is_u | is_j) | (invalid_funct3);
 
     // Make better
     assign i_format = {is_j, is_u, is_b, is_s, is_i, 1'b0};
