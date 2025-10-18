@@ -7,7 +7,8 @@ module memory(
     output [31:0] o_dmem_wdata,
     output [3:0] o_dmem_mask,
     output o_dmem_ren, o_dmem_wen,
-    output [31:0] mem_data_out
+    output [31:0] mem_data_out,
+    output mem_trap
 );
 
 // Assign outputs to be input to data memory from module inputs
@@ -57,5 +58,9 @@ assign mem_data_out = is_word
                     : is_unsigned_ld
                         ? {24'b0, i_dmem_rdata[31:24]} // Unsigned byte 4th
                         : {{24{i_dmem_rdata[31]}}, i_dmem_rdata[31:24]}; // Signed byte 4th
+
+// Check if the address is unaligned and assert trap
+assign mem_trap = (is_word & |address[1:0]) | // Word access but not aligned
+                  (is_h_or_b & address[0]);      // Half-word access but not aligned
               
 endmodule
