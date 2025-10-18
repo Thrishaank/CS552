@@ -1,3 +1,4 @@
+`default_nettype none
 module hart #(
     // After reset, the program counter (PC) should be initialized to this
     // address and start executing instructions from there.
@@ -130,262 +131,170 @@ module hart #(
     ,`RVFI_OUTPUTS,
 `endif
 );
-    // Fill in your implementation here.
-//////////////////////RF IMPLEMENTATION FOR TESTBENCH////////////////////////
-module rf (
-    input  wire        i_clk,
-    input  wire        i_rst,
-    input  wire        i_we,
-    input  wire [4:0]  i_waddr,
-    input  wire [31:0] i_wdata,
-    input  wire [4:0]  i_raddr1,
-    input  wire [4:0]  i_raddr2,
-    output wire [31:0] o_rdata1,
-    output wire [31:0] o_rdata2
-);
-    reg [31:0] mem[0:31];
-    integer i;
 
-    // synchronous write, x0 hard-wired to 0, reset clears regs
-    always @(posedge i_clk) begin
-        if (i_rst) begin
-            for (i = 0; i < 32; i = i + 1)
-                mem[i] <= 32'b0;
-        end else begin
-            if (i_we && (i_waddr != 5'd0))
-                mem[i_waddr] <= i_wdata;
-            mem[0] <= 32'b0;
-        end
-    end
-
-    // combinational reads; x0 is always 0
-    assign o_rdata1 = (i_raddr1 == 5'd0) ? 32'b0 : mem[i_raddr1];
-    assign o_rdata2 = (i_raddr2 == 5'd0) ? 32'b0 : mem[i_raddr2];
-endmodule
-//////////////////////////////////////////////////////////////////////////////
-
-    // =========================
-    // PC + Register File
-    // =========================
-	
-    reg [31:0] pc_q, pc_d; //Current and next instructions
-    assign o_imem_raddr = pc_q; //To instruction memory
-	
-    wire       rf_we; //WE for register file 
-    wire [4:0] rf_waddr; //register to write
-    wire [31:0] rf_wdata; //value to be stored
-	wire [31:0] rs1_val, rs2_val; // rs1/rs2 values via the rf submodule
-	
-// Program Counter register
-	always @(posedge i_clk) begin
-		if (i_rst) pc_q <= RESET_ADDR;
-		else       pc_q <= pc_d;
-end
-
-//tb can read dut.rf.mem[10]
-	rf rf (.i_clk(i_clk), .i_rst(i_rst), .i_we(rf_we), .i_waddr(rf_waddr), .i_wdata(rf_wdata),
-		   .i_raddr1(rs1), .i_raddr2(rs2), .o_rdata1(rs1_val), .o_rdata2(rs2_val));
+    wire [31:0] next_pc;
+    wire [31:0] instruction;
+    wire [31:0] pc_plus4;
+    wire [31:0] pc;
+    wire [31:0] reg_write_data;
 
 
-    // =========================
-    // Fetch / Decode fields
-    // =========================
-	
-    wire [31:0] instr  = i_imem_rdata; //fetched from IMEM
-    wire [6:0]  opcode = instr[6:0]; 
-    wire [2:0]  funct3 = instr[14:12]; //sub-op selector
-    wire [6:0]  funct7 = instr[31:25]; //sub-op selector
-    wire [4:0]  rs1    = instr[19:15];
-    wire [4:0]  rs2    = instr[24:20];
-    wire [4:0]  rd     = instr[11:7];
+    // Intermediate signals between stages
+    // Decode outputs
+    wire        branch, mem_read, mem_write, reg_write, imm_alu, reg_write_en;
+    wire        check_lt_or_eq, branch_expect_n, jump, reg_jump;
+    wire        is_word, is_h_or_b, is_unsigned_ld;
+    wire        is_auipc, is_lui;
+    wire        i_arith, i_unsigned, i_sub;
+    wire [2:0]  i_opsel;
+    wire [31:0] reg_out_1, reg_out_2, imm;
+    wire [4:0]  rd_addr, rs1_addr, rs2_addr;
 
-	//Force zero if index=0, else read he register file array
-    wire [31:0] rs1_val = (rs1 == 5'd0) ? 32'd0 : x[rs1];
-    wire [31:0] rs2_val = (rs2 == 5'd0) ? 32'd0 : x[rs2];
+    wire is_r;
+    wire is_i;
+    wire is_s;
+    wire is_b;
+    wire is_u;
+    wire is_j;
 
-    // Immediates (concat sign-extend)
-    wire [31:0] imm_i = {{20{instr[31]}}, instr[31:20]}; //I-type ImmGen
-    wire [31:0] imm_s = {{20{instr[31]}}, instr[31:25], instr[11:7]}; //S-type ImmGen
-    wire [31:0] imm_b = {{19{instr[31]}}, instr[31], instr[7], instr[30:25], instr[11:8], 1'b0}; //B-type ImmGen
-    wire [31:0] imm_u = {instr[31:12], 12'b0}; //U-type ImmGen
-    wire [31:0] imm_j = {{11{instr[31]}}, instr[31], instr[19:12], instr[20], instr[30:21], 1'b0}; //J-type ImmGen
+    // Execute outputs
+    wire [31:0] alu_result;
+    // Memory outputs
+    wire [31:0] mem_data_out;
 
-    // Instruction Class 
-	//[3.1. Register Arithmetic Instructions]
-    wire is_op     = (opcode == 7'b0110011); 
-	//[3.2. Register-Immediate Computational Instructions]
-    wire is_opimm  = (opcode == 7'b0010011);
-	//[3.3. Integer Immediate Instructions]
-    wire is_lui    = (opcode == 7'b0110111);
-    wire is_auipc  = (opcode == 7'b0010111);
-	//[3.4. Conditional Branch Instructions]
-    wire is_branch = (opcode == 7'b1100011);
-	//[3.5. Unconditional Jumps]
-    wire is_jal    = (opcode == 7'b1101111);
-    wire is_jalr   = (opcode == 7'b1100111) && (funct3 == 3'b000);
-	//[3.6. Memory Instructions]
-	wire is_load   = (opcode == 7'b0000011);
-    wire is_store  = (opcode == 7'b0100011);
-	
-    // EBREAK exact: 0x0010_0073
-    wire is_system = (opcode == 7'b1110011);
-    wire is_ebreak = is_system &&
-                     (instr[31:20] == 12'h001) &&
-                     (funct3 == 3'b000) && (rs1 == 5'd0) && (rd == 5'd0);
-					 
-					 
-    // =========================
-    // ALU implementation
-    // =========================
-	
-	//Named constants for every ALUop.
-    localparam ALU_ADD=4'd0, ALU_SUB=4'd1, ALU_SLT=4'd2, ALU_SLTU=4'd3,
-               ALU_XOR=4'd4, ALU_OR =4'd5, ALU_AND =4'd6,
-               ALU_SLL=4'd7, ALU_SRL=4'd8, ALU_SRA =4'd9, ALU_PASS=4'd15;
+    // Connect fetch module
 
-    reg [3:0]  alu_op; //selected operand
-    reg [31:0] alu_a, alu_b; //operands
-    reg [31:0] alu_y; //result
+    fetch #(.RESET_ADDR(RESET_ADDR)) Fetch(
+        .i_clk(i_clk), 
+        .i_rst(i_rst), 
+        .next_pc(next_pc), 
+        .i_imem_rdata(i_imem_rdata), 
+        .o_imem_raddr(o_imem_raddr), 
+        .instruction(instruction), 
+        .pc_plus4(pc_plus4), 
+        .pc(pc)
+    );
 
-    always @* begin
-        // defaults
-        alu_a  = rs1_val;
-        alu_b  = rs2_val;
-        alu_op = ALU_ADD;
+    assign o_retire_inst = instruction;
+    assign o_retire_pc = pc;
 
-	//RISC-V uses funct3 and the bit 30 (func7[5]) of the instruction to distinguish ops:
-        if (is_op) begin
-            case ({funct7[5],funct3})
-                4'b0_000: alu_op = ALU_ADD; 
-                4'b1_000: alu_op = ALU_SUB; 
-                4'b0_100: alu_op = ALU_XOR;
-                4'b0_110: alu_op = ALU_OR;
-                4'b0_111: alu_op = ALU_AND;
-                4'b0_001: alu_op = ALU_SLL;
-                4'b0_101: alu_op = ALU_SRL;
-                4'b1_101: alu_op = ALU_SRA;
-                4'b0_010: alu_op = ALU_SLT;
-                4'b0_011: alu_op = ALU_SLTU;
-                default:  alu_op = ALU_ADD;
-            endcase
-		//Immediate goes in alu_b:
-        end
-		else if (is_opimm) begin
-            case (funct3)
-                3'b000: begin alu_op=ALU_ADD;  alu_b=imm_i; end // ADDI
-                3'b100: begin alu_op=ALU_XOR;  alu_b=imm_i; end // XORI
-                3'b110: begin alu_op=ALU_OR;   alu_b=imm_i; end // ORI
-                3'b111: begin alu_op=ALU_AND;  alu_b=imm_i; end // ANDI
-                3'b010: begin alu_op=ALU_SLT;  alu_b=imm_i; end // SLTI
-                3'b011: begin alu_op=ALU_SLTU; alu_b=imm_i; end // SLTIU
-                3'b001: begin alu_op=ALU_SLL;  alu_b={27'b0,instr[24:20]}; end // SLLI
-		// SRLI/SRAI - Shifts use the shamt (instr[24:20]), so alu_b = {27'b0, instr[24:20]}.
-                3'b101: begin alu_op=(instr[30]?ALU_SRA:ALU_SRL); alu_b={27'b0,instr[24:20]}; end           
-                default: begin alu_op=ALU_ADD; alu_b=imm_i; end
-            endcase			
-        end
-		else if (is_load)  	   begin alu_op=ALU_ADD; alu_b=imm_i; end //Loads: rs1 + imm_i
-        else if (is_store)     begin alu_op=ALU_ADD; alu_b=imm_s; end //Stores: rs1 + imm_s
-        else if (is_auipc)     begin alu_op=ALU_ADD; alu_a=pc_q;  alu_b=imm_u; end //AUIPC: pc + imm_u
-        else if (is_lui)       begin alu_op=ALU_PASS; alu_a=imm_u; alu_b=32'd0; end //LUI: just place imm_u in rd
-    end
-	
-	//EXECUTION
-    always @* begin
-        case (alu_op)
-            ALU_ADD:  alu_y = alu_a + alu_b;
-            ALU_SUB:  alu_y = alu_a - alu_b;
-            ALU_XOR:  alu_y = alu_a ^ alu_b;
-            ALU_OR :  alu_y = alu_a | alu_b;
-            ALU_AND:  alu_y = alu_a & alu_b;
-            ALU_SLL:  alu_y = alu_a <<  alu_b[4:0];
-            ALU_SRL:  alu_y = alu_a >>  alu_b[4:0];
-            ALU_SRA:  alu_y = $signed(alu_a) >>> alu_b[4:0];
-            ALU_SLT:  alu_y = {31'b0, ($signed(alu_a) <  $signed(alu_b))};
-            ALU_SLTU: alu_y = {31'b0, (alu_a < alu_b)};
-            default:  alu_y = alu_a;
-        endcase
-    end
-	
-	
-    // =========================
-    // Branch / Next PC
-    // =========================
-	
-	//BEQ/BNE use equality.
-    wire beq  = (rs1_val == rs2_val);
-    wire bne  = (rs1_val != rs2_val);
-	//BLT/BGE are signed compares
-    wire blt  = ($signed(rs1_val) <  $signed(rs2_val));
-    wire bge  = ($signed(rs1_val) >= $signed(rs2_val));
-	//BLTU/BGEU are unsigned compares
-    wire bltu = (rs1_val <  rs2_val);
-    wire bgeu = (rs1_val >= rs2_val);
+    decode Decode(
+        .i_clk(i_clk), 
+        .i_rst(i_rst), 
+        .instruction(instruction), 
+        .reg_write_data(reg_write_data),
+        .rd_addr(rd_addr),
+        .pc_plus4(pc_plus4),
+        .branch(branch), 
+        .mem_read(mem_read), 
+        .mem_write(mem_write), 
+        .reg_write(reg_write), 
+        .imm_alu(imm_alu), 
+        .check_lt_or_eq(check_lt_or_eq), 
+        .branch_expect_n(branch_expect_n), 
+        .jump(jump), 
+        .reg_jump(reg_jump), 
+        .is_word(is_word), 
+        .is_h_or_b(is_h_or_b), 
+        .is_unsigned_ld(is_unsigned_ld), 
+        .i_arith(i_arith), 
+        .i_unsigned(i_unsigned), 
+        .i_sub(i_sub),
+        .i_opsel(i_opsel),
+        .is_auipc(is_auipc),
+        .reg_write_en(reg_write_en),
+        .is_lui(is_lui),
+        .rs1_addr(rs1_addr),
+        .rs2_addr(rs2_addr),
+        .imm_out(imm),
+        .is_r(is_r),
+        .is_i(is_i),
+        .is_s(is_s),
+        .is_b(is_b),
+        .is_u(is_u),
+        .is_j(is_j)
+    );
 
-	//Branch to respective operations
-    reg take_branch;
-    always @* begin
-        take_branch = 1'b0;
-        if (is_branch) begin
-            case (funct3)
-                3'b000: take_branch = beq;
-                3'b001: take_branch = bne;
-                3'b100: take_branch = blt;
-                3'b101: take_branch = bge;
-                3'b110: take_branch = bltu;
-                3'b111: take_branch = bgeu;
-                default: take_branch = 1'b0;
-            endcase
-        end
-    end
+    rf rf(
+        .i_clk       (i_clk),
+        .i_rst       (i_rst),
+        .i_rs1_raddr (rs1_addr),
+        .o_rs1_rdata (reg_out_1),
+        .i_rs2_raddr (rs2_addr),
+        .o_rs2_rdata (reg_out_2),
+        .i_rd_wen    (reg_write_en),
+        .i_rd_waddr  (rd_addr),
+        .i_rd_wdata  (reg_write_data)
+    ); 
 
-    wire [31:0] pc_plus4 = pc_q + 32'd4; //increment PC
-    wire [31:0] jal_tgt  = pc_q + imm_j; //JAL target
-    wire [31:0] br_tgt   = pc_q + imm_b; //branch target
-    wire [31:0] jalr_tgt = { (rs1_val + imm_i)[31:1], 1'b0 }; //JALR target
+    assign o_retire_rs1_raddr = ~(is_u) ? rs1_addr : 5'd0;
+    assign o_retire_rs2_raddr = ~(is_i | is_u | is_j) ? rs2_addr : 5'd0;
+    assign o_retire_rd_waddr =  ~(is_s | is_b) ? rd_addr : 5'd0;
+    assign o_retire_rs1_rdata = ~(is_u) ? reg_out_1 : 32'd0;
+    assign o_retire_rs2_rdata = ~(is_i | is_u | is_j) ? reg_out_2 : 32'd0;
+    assign o_retire_rd_wdata = ~(is_s | is_b) ? reg_write_data : 32'd0;
 
-	//PC MUX PRIORITY: JAL -> JALR -> default -> PC_INCREMENT
-    wire [31:0] next_pc_comb =
-        is_jal  ? jal_tgt  :
-        is_jalr ? jalr_tgt :
-        take_branch ? br_tgt : pc_plus4;
+    execute Execute(
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .reg_out_1(reg_out_1),
+        .reg_out_2(reg_out_2),
+        .imm(imm),
+        .imm_alu(imm_alu),
+        .pc(pc),
+        .pc_plus4(pc_plus4),
+        .i_arith(i_arith),
+        .i_unsigned(i_unsigned),
+        .i_sub(i_sub),
+        .i_opsel(i_opsel),
+        .branch(branch),
+        .jump(jump),
+        .reg_jump(reg_jump),
+        .check_lt_or_eq(check_lt_or_eq),
+        .branch_expect_n(branch_expect_n),
+        .alu_result(alu_result),
+        .next_pc(next_pc)   
+    );
 
+    memory Memory(
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .w_data(reg_out_2),
+        .address(alu_result),
+        .mem_read(mem_read),
+        .mem_write(mem_write),
+        .is_word(is_word),
+        .is_h_or_b(is_h_or_b),
+        .is_unsigned_ld(is_unsigned_ld),
+        .i_dmem_rdata(i_dmem_rdata),
+        .o_dmem_addr(o_dmem_addr),
+        .o_dmem_ren(o_dmem_ren),
+        .o_dmem_wen(o_dmem_wen),
+        .o_dmem_wdata(o_dmem_wdata),
+        .o_dmem_mask(o_dmem_mask),
+        .mem_data_out(mem_data_out)
+    );
 
-    // =========================
-    // DMEM (mask/address generation)
-    // =========================
-// Calculates the effective data memory address for loads/stores (rs1 + imm).
-// Generates the o_dmem_mask for byte/halfword/word accesses, and aligns store data into the correct byte lanes for writes.
-	
-	
-    // =========================
-    // Writeback
-    // =========================
-// Selects the final value to write back into the register file.
-// For loads, uses the memory read data (sign/zero-extended).
-// For ALU/jump/upper-immediate ops, uses ALU or PC-related results.
+    writeback Writeback(
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .alu_result(alu_result),
+        .mem_data_out(mem_data_out),
+        .pc_plus4(pc_plus4),
+        .pc(pc),
+        .imm(imm),
+        .mem_read(mem_read),
+        .reg_write(reg_write),
+        .is_auipc(is_auipc),
+        .is_lui(is_lui),
+        .reg_write_data(reg_write_data),
+        .reg_write_en(reg_write_en)
+    );
 
-
-    // =========================
-    // Trap & Halt
-    // =========================
-// Detects illegal or misaligned accesses and sets trap signals.
-// Also checks for EBREAK instructions that halt the CPU (to stop simulation).
-
-
-    // =========================
-    // PC update
-    // =========================
-// Chooses the next PC value each cycle.
-// Normally increments by 4, but jumps to branch/jump targets, or stays constant on halt (EBREAK).
-
-	
-	// =========================
-    // Outputs
-    // =========================
-// Drives the retirement interface for the testbench.
-// Reports the current instruction, register read/write data, PC values, and any trap/halt conditions once an instruction completes.
-
+    assign o_retire_halt = instruction[6:0] == 7'b1110011;
+    assign o_retire_valid = 1'b1;
+    assign o_retire_next_pc = next_pc;
+    assign o_retire_trap = 1'b0;
 
 endmodule
 

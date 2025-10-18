@@ -1,82 +1,90 @@
 module decode(
-    input clk, i_rst,
+    input i_clk, i_rst,
     input [31:0] instruction,
     input [31:0] reg_write_data,
     input [31:0] pc_plus4,
-    output reg branch, mem_read, mem_write, regWrite, MemtoReg, ALUSrc,
-    output reg [1:0]immALU, 
-    output check_lt_or_eq, branch_expect_n, jump, reg_jump, is_word, is_h_or_b, is_unsigned_ld, 
-    output reg i_arith, i_unsigned, i_sub,
-    output reg [2:0] i_opsel,
-    output [31:0] reg_out_1, reg_out_2, imm_out
+    input reg_write_en,
+    output branch, imm_alu, check_lt_or_eq, branch_expect_n, jump, reg_jump, 
+    output i_arith, i_unsigned, i_sub,
+    output [2:0] i_opsel,
+    output is_auipc, is_lui,
+    output [4:0] rs1_addr, rs2_addr, rd_addr,
+    output [31:0] imm_out,
+    output mem_read, mem_write, is_word, is_h_or_b, is_unsigned_ld,
+    output reg_write,
+    output wire is_r,
+    output wire is_i,
+    output wire is_s,
+    output wire is_b,
+    output wire is_u,
+    output wire is_j,
+    output wire decode_trap
 );
-  rf u_rf (
-    .i_clk       (clk),
-    .i_rst       (i_rst),
-    .i_rs1_raddr (instruction[19:15]),
-    .o_rs1_rdata (reg_out_1),
-    .i_rs2_raddr (instruction[24:20]),
-    .o_rs2_rdata (reg_out_2),
-    .i_rd_wen    (regWrite),
-    .i_rd_waddr  (instruction[11:7]),
-    .i_rd_wdata  (reg_write_data)
-  );
+
+    wire [5:0] i_format;
+
     imm u_imm (
-    .i_inst (instruction),
-    .o_immediate  (imm_out)
-  );
-    //  i_rs1_raddr = instruction[19:15];
-    //  i_rs2_raddr = instruction[24:20];
-    //  i_rd_waddr = instruction[11:7];
-    //  i_inst = instruction;
+        .i_inst (instruction),
+        .i_format(i_format),
+        .o_immediate  (imm_out)
+    );
 
     assign check_lt_or_eq = instruction[14];
     assign branch_expect_n = instruction[12];
 
-  wire [6:0] opcode     = instruction[6:0];
-  wire [2:0] funct3     = instruction[14:12];
-  wire funct7b5   = instruction[30];
+    wire [6:0] opcode     = instruction[6:0];
+    wire [2:0] funct3     = instruction[14:12];
+    wire funct7b5   = instruction[30];
 
-    localparam R_TYPE    = 7'b0110011;  
-    localparam I_TYPE    = 7'b0010011;  
+    localparam R_TYPE    = 7'b0110011;
+    localparam NON_J_U_LOWER_4   = 4'b0011;
+    localparam I_UPPER_2 = 2'b00;
+    localparam IMM_ARITH    = 7'b0010011;  
+    localparam J_LOWER_3 = 3'b111;
+    localparam J_UPPER_3 = 3'b110;
     localparam LOAD      = 7'b0000011;  
     localparam STORE     = 7'b0100011;  
     localparam BRANCH    = 7'b1100011;  
     localparam JAL       = 7'b1101111;  
     localparam JALR      = 7'b1100111;  
     localparam LUI       = 7'b0110111;  
-    localparam AUIPC     = 7'b0010111;  
+    localparam AUIPC     = 7'b0010111; 
 
-  wire is_rtype  = (opcode == R_TYPE);
-  wire is_itype  = (opcode == I_TYPE);
-  wire is_load   = (opcode == LOAD);
-  wire is_store  = (opcode == STORE);
-  wire is_branch = (opcode == BRANCH);
-  wire is_jal    = (opcode == JAL);
-  wire is_jalr   = (opcode == JALR);
-  wire is_lui    = (opcode == LUI);
-  wire is_auipc  = (opcode == AUIPC);
+    assign decode_trap = ~(is_r | is_i | is_s | is_b | is_u | is_j);
 
-  assign ALUSrc   = is_itype | is_load | is_store | is_jalr | is_lui | is_auipc;
-  assign MemtoReg = is_load;                       
-  assign regWrite = is_rtype | is_itype | is_load | is_jal | is_jalr | is_lui | is_auipc;
-  assign mem_read = is_load;
-  assign mem_write= is_store;
-  assign branch   = is_branch;
-  assign immALU   = ({2{is_branch}} & 2'b01) | ({2{is_rtype | is_itype}} & 2'b10)
-                  | ({2{is_load | is_store | is_jal | is_jalr | is_lui | is_auipc}} & 2'b00);
-  assign jump       = is_jal;
-  assign reg_jump   = is_jalr;
-  assign is_word       = ( (is_load | is_store) && (funct3 == 3'b010) );
-  assign is_h_or_b     = ( (is_load | is_store) && (funct3[1:0] != 2'b10) );
-  assign is_unsigned_ld= ( is_load && funct3[2] );
+    assign rs1_addr = instruction[19:15];
+    assign rs2_addr = instruction[24:20];
+    assign rd_addr = instruction[11:7];
 
-//ALU Ctrl
-  assign i_arith  = 1'b1;
-  assign i_opsel  = (immALU == 2'b10) ? funct3 : 3'b000;
-  assign i_sub = (immALU == 2'b01) ? 1'b1 : (immALU == 2'b10) ? 
-                ( (funct3 == 3'b000) ? funct7b5 :(funct3 == 3'b101) ? funct7b5 :1'b0 ) : 1'b0;
-  assign i_unsigned = (immALU == 2'b01) ? funct3[2] :(immALU == 2'b10) ? (funct3 == 3'b011) : 1'b0;
+    assign is_r = (opcode == R_TYPE);
+    assign is_i = (opcode[3:0] == NON_J_U_LOWER_4 && opcode[6:5] == I_UPPER_2);
+    wire is_imm_arith  = (is_i & opcode[4]);
+    wire is_load   = (is_i & ~opcode[4]);
+    assign is_s  = (opcode == STORE);
+    assign is_b = (opcode == BRANCH);
+    assign is_lui    = (opcode == LUI);
+    assign is_auipc  = (opcode == AUIPC);
+    assign is_u = (is_lui | is_auipc);
+    assign is_j = (opcode[2:0] == J_LOWER_3 && opcode[6:4] == J_UPPER_3);
 
+    // Make better
+    assign i_format = {is_j, is_u, is_b, is_s, is_i, 1'b0};
+
+    assign imm_alu = ~(is_r | is_b);
+    assign reg_write = ~(is_s | is_b);
+    assign mem_read = is_load;
+    assign mem_write = is_s;
+    assign branch   = is_b;
+    assign jump       = is_j;
+    assign reg_jump   = is_j & ~opcode[3];
+    assign is_word       = ( (is_load | is_s) && (funct3 == 3'b010) );
+    assign is_h_or_b     = ( (is_load | is_s) && (funct3[1:0] != 2'b10) );
+    assign is_unsigned_ld= ( is_load && funct3[2] );
+
+    //ALU Ctrl
+    assign i_arith = funct7b5;
+    assign i_opsel  = (is_r | is_imm_arith) ? funct3 : 3'b000;
+    assign i_sub = (is_r & funct7b5);
+    assign i_unsigned = funct3[0];
 
 endmodule

@@ -1,8 +1,7 @@
-module fetch(
-    input clk, i_rst,
-    input [31:0] new_pc,
+module fetch #(parameter RESET_ADDR = 32'h00000000)(
+    input i_clk, i_rst,
+    input [31:0] next_pc,
     input [31:0] i_imem_rdata,
-    input [31:0] reset_addr,
     output [31:0] o_imem_raddr,
     output [31:0] instruction,
     output [31:0] pc_plus4,
@@ -10,12 +9,12 @@ module fetch(
 );
 
     // Infers PC flop with active high reset
-    always @(posedge clk) begin
+    always @(posedge i_clk) begin
         // infer pc reg
         if (i_rst)
-            pc <= reset_addr;
+            pc <= RESET_ADDR;
         else
-            pc <= new_pc;
+            pc <= next_pc;
     end
 
     // increment pc by 4
