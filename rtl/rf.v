@@ -48,7 +48,7 @@ module rf #(
     input  wire [ 4:0] i_rd_waddr,
     input  wire [31:0] i_rd_wdata
 );
-    reg [31:0] register_file [32];
+    reg [31:0] mem [0:31];
     reg [31:0] o_rs1_rdata_r; // Not a register, just want to using always block
     reg [31:0] o_rs2_rdata_r; // Not a register, just want to using always block
     integer i;
@@ -56,10 +56,10 @@ module rf #(
     always @(posedge i_clk) begin
         if (i_rst) begin
             for (i = 0; i < 32; i = i + 1) begin
-                register_file[i] <= 32'b0;
+                mem[i] <= 32'b0;
             end
         end else if (i_rd_wen & (|i_rd_waddr)) begin
-            register_file[i_rd_waddr] <= i_rd_wdata;
+            mem[i_rd_waddr] <= i_rd_wdata;
         end
     end
 
@@ -68,25 +68,25 @@ module rf #(
             if (i_rs1_raddr == i_rd_waddr) begin
                 o_rs1_rdata_r = i_rd_wdata;
             end else begin
-                o_rs1_rdata_r = register_file[i_rs1_raddr];
+                o_rs1_rdata_r = mem[i_rs1_raddr];
             end
 
             if (i_rs2_raddr == i_rd_waddr) begin
                 o_rs2_rdata_r = i_rd_wdata;
             end else begin
-                o_rs2_rdata_r = register_file[i_rs2_raddr];
+                o_rs2_rdata_r = mem[i_rs2_raddr];
             end
         end else begin
             if (~|i_rs1_raddr) begin
                o_rs1_rdata_r = 32'b0;
             end else begin
-                o_rs1_rdata_r = register_file[i_rs1_raddr];
+                o_rs1_rdata_r = mem[i_rs1_raddr];
             end
 
             if (~|i_rs2_raddr) begin
                o_rs2_rdata_r = 32'b0;
             end else begin
-                o_rs2_rdata_r = register_file[i_rs2_raddr];
+                o_rs2_rdata_r = mem[i_rs2_raddr];
             end
         end
     end
