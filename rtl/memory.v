@@ -7,7 +7,7 @@ module store(
     output [31:0] o_dmem_wdata,
     output [3:0] o_dmem_mask,
     output o_dmem_ren, o_dmem_wen,
-    output [31:0] data_mem_out
+    output [31:0] mem_data_out
 );
 
 // Assign outputs to be input to data memory from module inputs
@@ -31,8 +31,8 @@ assign o_dmem_mask = is_word
                     ? 4'b0100
                     : 4'b1000;
 
-// Assign data_mem_out based on load type and address alignment
-assign data_mem_out = is_word
+// Assign mem_data_out based on load type and address alignment
+assign mem_data_out = is_word
     ? i_dmem_rdata // If word
     : is_h_or_b
         ? address[1] // If half-word
