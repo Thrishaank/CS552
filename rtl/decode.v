@@ -18,7 +18,7 @@ module decode(
     output wire is_b,
     output wire is_u,
     output wire is_j,
-    output wire decode_trap
+    output wire decode_trap,
 );
 
     wire [5:0] i_format;
@@ -50,7 +50,14 @@ module decode(
     localparam LUI       = 7'b0110111;  
     localparam AUIPC     = 7'b0010111; 
 
-    assign decode_trap = ~(is_r | is_i | is_s | is_b | is_u | is_j);
+
+    wire invalid_funct3 = (is_load  & (funct3 > 3'b101)) |
+                          (is_s     & (funct3 > 3'b010)) |
+                          (is_b     & (funct3 = 3'b010) |(funct3 = 3'b011) ) |
+                          (is_r     & (~(funct3 inside {3'b000,3'b001,3'b010,3'b011,3'b100,3'b101,3'b110,3'b111})));
+
+    assign decode_trap = ~(is_r | is_i | is_s | is_b | is_u | is_j) | (invalid_funct3);
+
 
     assign rs1_addr = instruction[19:15];
     assign rs2_addr = instruction[24:20];
