@@ -1,5 +1,5 @@
 module fetch #(parameter RESET_ADDR = 32'h00000000)(
-    input clk, i_rst,
+    input i_clk, i_rst,
     input [31:0] next_pc,
     input [31:0] i_imem_rdata,
     output [31:0] o_imem_raddr,
@@ -9,7 +9,7 @@ module fetch #(parameter RESET_ADDR = 32'h00000000)(
 );
 
     // Infers PC flop with active high reset
-    always @(posedge clk) begin
+    always @(posedge i_clk) begin
         // infer pc reg
         if (i_rst)
             pc <= RESET_ADDR;

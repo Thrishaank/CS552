@@ -1,3 +1,4 @@
+`default_nettype none
 module hart #(
     // After reset, the program counter (PC) should be initialized to this
     // address and start executing instructions from there.
@@ -140,27 +141,31 @@ module hart #(
 
     // Intermediate signals between stages
     // Decode outputs
-    wire        branch, mem_read, mem_write, regWrite, immALU;
+    wire        branch, mem_read, mem_write, reg_write, imm_alu, reg_write_en;
     wire        check_lt_or_eq, branch_expect_n, jump, reg_jump;
     wire        is_word, is_h_or_b, is_unsigned_ld;
+    wire        is_auipc, is_lui;
     wire        i_arith, i_unsigned, i_sub;
     wire [2:0]  i_opsel;
     wire [31:0] reg_out_1, reg_out_2, imm;
     wire [4:0]  rd_addr, rs1_addr, rs2_addr;
 
+    wire is_r;
+    wire is_i;
+    wire is_s;
+    wire is_b;
+    wire is_u;
+    wire is_j;
+
     // Execute outputs
     wire [31:0] alu_result;
-    wire        branch_taken;
-    wire [31:0] next_pc;
-
     // Memory outputs
     wire [31:0] mem_data_out;
 
     // Connect fetch module
-    assign clk = i_clk;
 
     fetch #(.RESET_ADDR(RESET_ADDR)) Fetch(
-        .clk(i_clk), 
+        .i_clk(i_clk), 
         .i_rst(i_rst), 
         .next_pc(next_pc), 
         .i_imem_rdata(i_imem_rdata), 
@@ -174,7 +179,7 @@ module hart #(
     assign o_retire_pc = pc;
 
     decode Decode(
-        .clk(i_clk), 
+        .i_clk(i_clk), 
         .i_rst(i_rst), 
         .instruction(instruction), 
         .reg_write_data(reg_write_data),
@@ -183,8 +188,8 @@ module hart #(
         .branch(branch), 
         .mem_read(mem_read), 
         .mem_write(mem_write), 
-        .regWrite(regWrite), 
-        .immALU(immALU), 
+        .reg_write(reg_write), 
+        .imm_alu(imm_alu), 
         .check_lt_or_eq(check_lt_or_eq), 
         .branch_expect_n(branch_expect_n), 
         .jump(jump), 
@@ -197,30 +202,47 @@ module hart #(
         .i_sub(i_sub),
         .i_opsel(i_opsel),
         .is_auipc(is_auipc),
+        .reg_write_en(reg_write_en),
         .is_lui(is_lui),
         .rs1_addr(rs1_addr),
         .rs2_addr(rs2_addr),
-        .reg_out_1(reg_out_1), 
-        .reg_out_2(reg_out_2), 
-        .imm_out(imm)
+        .imm_out(imm),
+        .is_r(is_r),
+        .is_i(is_i),
+        .is_s(is_s),
+        .is_b(is_b),
+        .is_u(is_u),
+        .is_j(is_j)
     );
 
-    assign o_retire_rs1_raddr = rs1_addr;
-    assign o_retire_rs2_raddr = rs2_addr;
-    assign o_retire_rd_waddr = rd_addr;
-    assign o_retire_rs1_rdata = reg_out_1;
-    assign o_retire_rs2_rdata = reg_out_2;
-    assign o_retire_rd_wdata = reg_write_data;
+    rf rf(
+        .i_clk       (i_clk),
+        .i_rst       (i_rst),
+        .i_rs1_raddr (rs1_addr),
+        .o_rs1_rdata (reg_out_1),
+        .i_rs2_raddr (rs2_addr),
+        .o_rs2_rdata (reg_out_2),
+        .i_rd_wen    (reg_write_en),
+        .i_rd_waddr  (rd_addr),
+        .i_rd_wdata  (reg_write_data)
+    ); 
+
+    assign o_retire_rs1_raddr = ~(is_u) ? rs1_addr : 5'd0;
+    assign o_retire_rs2_raddr = ~(is_i | is_u | is_j) ? rs2_addr : 5'd0;
+    assign o_retire_rd_waddr =  ~(is_s | is_b) ? rd_addr : 5'd0;
+    assign o_retire_rs1_rdata = ~(is_u) ? reg_out_1 : 32'd0;
+    assign o_retire_rs2_rdata = ~(is_i | is_u | is_j) ? reg_out_2 : 32'd0;
+    assign o_retire_rd_wdata = ~(is_s | is_b) ? reg_write_data : 32'd0;
 
     execute Execute(
-        .clk(i_clk),
+        .i_clk(i_clk),
         .i_rst(i_rst),
         .reg_out_1(reg_out_1),
         .reg_out_2(reg_out_2),
         .imm(imm),
+        .imm_alu(imm_alu),
         .pc(pc),
         .pc_plus4(pc_plus4),
-        .immALU(immALU),
         .i_arith(i_arith),
         .i_unsigned(i_unsigned),
         .i_sub(i_sub),
@@ -231,15 +253,14 @@ module hart #(
         .check_lt_or_eq(check_lt_or_eq),
         .branch_expect_n(branch_expect_n),
         .alu_result(alu_result),
-        .branch_taken(branch_taken),
-        .new_pc(new_pc)
+        .next_pc(next_pc)   
     );
 
     memory Memory(
-        .clk(i_clk),
+        .i_clk(i_clk),
         .i_rst(i_rst),
-        .alu_result(alu_result),
-        .reg_out_2(reg_out_2),
+        .w_data(reg_out_2),
+        .address(alu_result),
         .mem_read(mem_read),
         .mem_write(mem_write),
         .is_word(is_word),
@@ -255,20 +276,25 @@ module hart #(
     );
 
     writeback Writeback(
-        .clk(i_clk),
+        .i_clk(i_clk),
         .i_rst(i_rst),
         .alu_result(alu_result),
         .mem_data_out(mem_data_out),
         .pc_plus4(pc_plus4),
         .pc(pc),
-        .imm(imm_out),
+        .imm(imm),
         .mem_read(mem_read),
-        .reg_write(regWrite),
+        .reg_write(reg_write),
         .is_auipc(is_auipc),
         .is_lui(is_lui),
         .reg_write_data(reg_write_data),
         .reg_write_en(reg_write_en)
     );
+
+    assign o_retire_halt = instruction[6:0] == 7'b1110011;
+    assign o_retire_valid = 1'b1;
+    assign o_retire_next_pc = next_pc;
+    assign o_retire_trap = 1'b0;
 
 endmodule
 

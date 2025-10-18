@@ -1,5 +1,5 @@
 module writeback(
-    input clk, i_rst,
+    input i_clk, i_rst,
     input mem_read, reg_write, is_auipc, is_lui,
     input [31:0] mem_data_out, alu_result, pc, pc_plus4, imm,
     output [31:0] reg_write_data,
