@@ -30,11 +30,12 @@ module decode(
     //  i_rd_waddr = instruction[11:7];
     //  i_inst = instruction;
 
-    //2'b00 - "Just do ADD for address calculation"
-    //2'b01 - "Just do SUB for comparison"
-    //2'b10 - "Look at funct3/funct7 to decide what to do"
     assign check_lt_or_eq = instruction[14];
     assign branch_expect_n = instruction[12];
+
+  wire [6:0] opcode     = instruction[6:0];
+  wire [2:0] funct3     = instruction[14:12];
+  wire funct7b5   = instruction[30];
 
     localparam R_TYPE    = 7'b0110011;  
     localparam I_TYPE    = 7'b0010011;  
@@ -46,153 +47,36 @@ module decode(
     localparam LUI       = 7'b0110111;  
     localparam AUIPC     = 7'b0010111;  
 
-    always @(*) begin
-        branch = 0;
-        mem_read = 0;
-        MemtoReg = 0;
-        immALU = 2'b00;
-        mem_write = 0;
-        ALUSrc = 0;
-        regWrite = 0;
+  wire is_rtype  = (opcode == R_TYPE);
+  wire is_itype  = (opcode == I_TYPE);
+  wire is_load   = (opcode == LOAD);
+  wire is_store  = (opcode == STORE);
+  wire is_branch = (opcode == BRANCH);
+  wire is_jal    = (opcode == JAL);
+  wire is_jalr   = (opcode == JALR);
+  wire is_lui    = (opcode == LUI);
+  wire is_auipc  = (opcode == AUIPC);
 
-        case (instruction[6:0])
+  assign ALUSrc   = is_itype | is_load | is_store | is_jalr | is_lui | is_auipc;
+  assign MemtoReg = is_load;                       
+  assign regWrite = is_rtype | is_itype | is_load | is_jal | is_jalr | is_lui | is_auipc;
+  assign mem_read = is_load;
+  assign mem_write= is_store;
+  assign branch   = is_branch;
+  assign immALU   = ({2{is_branch}} & 2'b01) | ({2{is_rtype | is_itype}} & 2'b10)
+                  | ({2{is_load | is_store | is_jal | is_jalr | is_lui | is_auipc}} & 2'b00);
+  assign jump       = is_jal;
+  assign reg_jump   = is_jalr;
+  assign is_word       = ( (is_load | is_store) && (funct3 == 3'b010) );
+  assign is_h_or_b     = ( (is_load | is_store) && (funct3[1:0] != 2'b10) );
+  assign is_unsigned_ld= ( is_load && funct3[2] );
 
-            R_TYPE: begin  
-                ALUSrc = 0;      
-                MemtoReg = 0;   
-                regWrite = 1;    
-                mem_read = 0;
-                mem_write = 0;
-                branch = 0;
-                immALU = 2'b10;   
-            end
+//ALU Ctrl
+  assign i_arith  = 1'b1;
+  assign i_opsel  = (immALU == 2'b10) ? funct3 : 3'b000;
+  assign i_sub = (immALU == 2'b01) ? 1'b1 : (immALU == 2'b10) ? 
+                ( (funct3 == 3'b000) ? funct7b5 :(funct3 == 3'b101) ? funct7b5 :1'b0 ) : 1'b0;
+  assign i_unsigned = (immALU == 2'b01) ? funct3[2] :(immALU == 2'b10) ? (funct3 == 3'b011) : 1'b0;
 
-            I_TYPE: begin  
-                ALUSrc = 1;      
-                MemtoReg = 0;    
-                regWrite = 1;    
-                mem_read = 0;
-                mem_write = 0;
-                branch = 0;
-                immALU = 2'b10;   
-            end
-
-            LOAD: begin  
-                ALUSrc = 1;      
-                MemtoReg = 1;    
-                regWrite = 1;    
-                mem_read = 1;     
-                mem_write = 0;
-                branch = 0;
-                immALU = 2'b00;   
-            end
-
-            STORE: begin  
-                ALUSrc = 1;      
-                MemtoReg = 0;    
-                regWrite = 0;    
-                mem_read = 0;
-                mem_write = 1;    
-                branch = 0;
-                immALU = 2'b00;   
-            end
-
-            BRANCH: begin  
-                ALUSrc = 0;      
-                MemtoReg = 0;    
-                regWrite = 0;    
-                mem_read = 0;
-                mem_write = 0;
-                branch = 1;      
-                immALU = 2'b01;   
-            end
-
-            JAL: begin  
-                ALUSrc = 0;      
-                MemtoReg = 0;    
-                regWrite = 1;    
-                mem_read = 0;
-                mem_write = 0;
-                branch = 0;
-                immALU = 2'b00;  
-            end
-
-            JALR: begin  
-                ALUSrc = 1;      
-                MemtoReg = 0;    
-                regWrite = 1;    
-                mem_read = 0;
-                mem_write = 0;
-                branch = 0;
-                immALU = 2'b00;   
-            end
-
-            LUI: begin  
-                ALUSrc = 1;      
-                MemtoReg = 0;    
-                regWrite = 1;    
-                mem_read = 0;
-                mem_write = 0;
-                branch = 0;
-                immALU = 2'b00;   
-            end
-
-            AUIPC: begin  
-                ALUSrc = 1;      
-                MemtoReg = 0;    
-                regWrite = 1;    
-                mem_read = 0;
-                mem_write = 0;
-                branch = 0;
-                immALU = 2'b00;   
-            end
-
-            default: begin
-                branch = 0;
-                mem_read = 0;
-                MemtoReg = 0;
-                immALU = 2'b00;
-                mem_write = 0;
-                ALUSrc = 0;
-                regWrite = 0;
-            end
-        endcase
-    end
-
-
-    wire [2:0] funct3   = instruction[14:12];
-    wire       funct7b5 = instruction[30];   // bit 5 of funct7 
-
-    always @* begin
-        i_arith    = 1'b1;
-        i_unsigned = 1'b0;
-        i_sub      = 1'b0;
-        i_opsel    = 3'b000; 
-
-        case (immALU)
-            2'b00: begin
-                i_opsel = 3'b000;
-                i_sub   = 1'b0;
-            end
-
-            2'b01: begin
-                i_opsel    = 3'b000; 
-                i_sub      = 1'b1;   
-                i_unsigned = funct3[2]; 
-            end
-
-            2'b10: begin
-                i_opsel = funct3;
-                case (funct3)
-                    3'b000: i_sub      = funct7b5; 
-                    3'b101: i_sub      = funct7b5; 
-                    3'b011: i_unsigned = 1'b1;     
-                    default: ; 
-                endcase
-            end
-
-            default: ; 
-        endcase
-    end
 
 endmodule
