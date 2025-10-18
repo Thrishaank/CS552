@@ -17,7 +17,8 @@ module decode(
     output wire is_s,
     output wire is_b,
     output wire is_u,
-    output wire is_j
+    output wire is_j,
+    output wire decode_trap
 );
 
     wire [5:0] i_format;
@@ -48,6 +49,8 @@ module decode(
     localparam JALR      = 7'b1100111;  
     localparam LUI       = 7'b0110111;  
     localparam AUIPC     = 7'b0010111; 
+
+    assign decode_trap = ~(is_r | is_i | is_s | is_b | is_u | is_j);
 
     assign rs1_addr = instruction[19:15];
     assign rs2_addr = instruction[24:20];
