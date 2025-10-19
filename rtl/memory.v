@@ -13,7 +13,6 @@ module memory(
 
 // Assign outputs to be input to data memory from module inputs
 assign o_dmem_addr  = {address[31:2], 2'b00}; // Word align address
-assign o_dmem_wdata = w_data;
 assign o_dmem_ren   = mem_read;
 assign o_dmem_wen   = mem_write;
 
@@ -59,8 +58,24 @@ assign mem_data_out = is_word
                         ? {24'b0, i_dmem_rdata[31:24]} // Unsigned byte 4th
                         : {{24{i_dmem_rdata[31]}}, i_dmem_rdata[31:24]}; // Signed byte 4th
 
+// Assign mem_data_out based on load type and address alignment
+assign o_dmem_wdata = is_word
+    ? w_data // If word
+    : is_h_or_b
+        ? address[1] // Is half-word, select correct half
+            ? w_data << 16
+            : w_data
+        : address[1:0] == 2'b00 // If byte
+            ? w_data
+            : address[1:0] == 2'b01
+                ? w_data << 8
+                : address[1:0] == 2'b10
+                    ? w_data << 16
+                    : w_data << 24;
+
 // Check if the address is unaligned and assert trap
-assign mem_trap = (is_word & |address[1:0]) | // Word access but not aligned
-                  (is_h_or_b & address[0]);      // Half-word access but not aligned
-              
+assign mem_trap = (mem_read | mem_write) & 
+                    ((is_word & |address[1:0]) | // Word access but not aligned
+                    (is_h_or_b & address[0]));      // Half-word access but not aligned
+
 endmodule

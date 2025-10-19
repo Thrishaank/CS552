@@ -18,8 +18,10 @@ module decode(
     output wire is_b,
     output wire is_u,
     output wire is_j,
-    output wire decode_trap
+    output wire decode_trap,
+    output wire halt
 );
+
 
     wire [5:0] i_format;
 
@@ -40,8 +42,6 @@ module decode(
     localparam NON_J_U_LOWER_4   = 4'b0011;
     localparam I_UPPER_2 = 2'b00;
     localparam IMM_ARITH    = 7'b0010011;  
-    localparam J_LOWER_3 = 3'b111;
-    localparam J_UPPER_3 = 3'b110;
     localparam LOAD      = 7'b0000011;  
     localparam STORE     = 7'b0100011;  
     localparam BRANCH    = 7'b1100011;  
@@ -50,22 +50,27 @@ module decode(
     localparam LUI       = 7'b0110111;  
     localparam AUIPC     = 7'b0010111; 
 
-    assign decode_trap = ~(is_r | is_i | is_s | is_b | is_u | is_j);
+    assign decode_trap = ~(is_r | is_i | is_s | is_b | is_u | is_j | halt);
 
     assign rs1_addr = instruction[19:15];
     assign rs2_addr = instruction[24:20];
     assign rd_addr = instruction[11:7];
 
+    wire is_jal = opcode == JAL;
+    wire is_jalr = opcode == JALR;
+
     assign is_r = (opcode == R_TYPE);
-    assign is_i = (opcode[3:0] == NON_J_U_LOWER_4 && opcode[6:5] == I_UPPER_2);
+    assign is_i = (opcode[3:0] == NON_J_U_LOWER_4 && opcode[6:5] == I_UPPER_2) | is_jalr;
     wire is_imm_arith  = (is_i & opcode[4]);
-    wire is_load   = (is_i & ~opcode[4]);
+    wire is_load   = (is_i & ~opcode[4] & ~opcode[2]);
     assign is_s  = (opcode == STORE);
     assign is_b = (opcode == BRANCH);
     assign is_lui    = (opcode == LUI);
     assign is_auipc  = (opcode == AUIPC);
     assign is_u = (is_lui | is_auipc);
-    assign is_j = (opcode[2:0] == J_LOWER_3 && opcode[6:4] == J_UPPER_3);
+    assign is_j = is_jal;
+    assign halt = opcode == 7'b1110011;
+
 
     // Make better
     assign i_format = {is_j, is_u, is_b, is_s, is_i, 1'b0};
@@ -75,10 +80,10 @@ module decode(
     assign mem_read = is_load;
     assign mem_write = is_s;
     assign branch   = is_b;
-    assign jump       = is_j;
-    assign reg_jump   = is_j & ~opcode[3];
-    assign is_word       = ( (is_load | is_s) && (funct3 == 3'b010) );
-    assign is_h_or_b     = ( (is_load | is_s) && (funct3[1:0] != 2'b10) );
+    assign jump       = is_j | is_jalr;
+    assign reg_jump   = is_jalr;
+    assign is_word       = funct3[1];
+    assign is_h_or_b     = funct3[0];
     assign is_unsigned_ld= ( is_load && funct3[2] );
 
     //ALU Ctrl

@@ -149,6 +149,7 @@ module hart #(
     wire [2:0]  i_opsel;
     wire [31:0] reg_out_1, reg_out_2, imm;
     wire [4:0]  rd_addr, rs1_addr, rs2_addr;
+    wire decode_trap, mem_trap, pc_write_trap;
 
     wire is_r;
     wire is_i;
@@ -212,7 +213,9 @@ module hart #(
         .is_s(is_s),
         .is_b(is_b),
         .is_u(is_u),
-        .is_j(is_j)
+        .is_j(is_j),
+        .decode_trap(decode_trap),
+        .halt(o_retire_halt)
     );
 
     rf rf(
@@ -253,7 +256,9 @@ module hart #(
         .check_lt_or_eq(check_lt_or_eq),
         .branch_expect_n(branch_expect_n),
         .alu_result(alu_result),
-        .next_pc(next_pc)   
+        .next_pc(next_pc),
+        .pc_write_trap(pc_write_trap)
+
     );
 
     memory Memory(
@@ -272,7 +277,8 @@ module hart #(
         .o_dmem_wen(o_dmem_wen),
         .o_dmem_wdata(o_dmem_wdata),
         .o_dmem_mask(o_dmem_mask),
-        .mem_data_out(mem_data_out)
+        .mem_data_out(mem_data_out),
+        .mem_trap(mem_trap)
     );
 
     writeback Writeback(
@@ -288,13 +294,13 @@ module hart #(
         .is_auipc(is_auipc),
         .is_lui(is_lui),
         .reg_write_data(reg_write_data),
-        .reg_write_en(reg_write_en)
+        .reg_write_en(reg_write_en),
+        .jump(jump)
     );
 
-    assign o_retire_halt = instruction[6:0] == 7'b1110011;
     assign o_retire_valid = 1'b1;
     assign o_retire_next_pc = next_pc;
-    assign o_retire_trap = 1'b0;
+    assign o_retire_trap = pc_write_trap | mem_trap | decode_trap;
 
 endmodule
 
