@@ -13,14 +13,21 @@ module execute (
 
     wire [31:0] pc_plus_offset;
 
-    assign pc_plus_offset = (jump | (branch & ((check_lt_or_eq) ? (branch_expect_n ^ lt) : (branch_expect_n ^ eq)))) ? (pc + imm) : (pc_plus4);
+    assign pc_plus_offset = (jump | (branch & 
+        ((check_lt_or_eq) ? (branch_expect_n ^ lt) : (branch_expect_n ^ eq)))) // Check if branch is successful
+            ? pc + imm // jal or successful branch
+            : pc_plus4; // unsuccessful branch or other instruction;
 
-    assign next_pc = (reg_jump) ? {alu_result[31:1], 1'b0} : pc_plus_offset;
+    assign next_pc = reg_jump
+         ? {alu_result[31:1], 1'b0} // jalr
+         : pc_plus_offset; // Anything else
 
     assign pc_write_trap = |next_pc[1:0];
 
     wire [31:0] i_op2; 
-    assign i_op2 = (imm_alu) ? imm : reg_out_2;
+    assign i_op2 = imm_alu 
+                    ? imm // Use immediate as 2nd operand for instructions which use it
+                    : reg_out_2; // Select register as 2nd operand for all other instructions
     alu iALU1(.i_opsel(i_opsel), .i_sub(i_sub), .i_unsigned(i_unsigned), .i_arith(i_arith),
         .i_op1(reg_out_1), .i_op2(i_op2), .o_result(alu_result), .o_eq(eq), .o_slt(lt));
 endmodule

@@ -7,7 +7,15 @@ module writeback(
 );
 
 
-    assign reg_write_data = (jump) ? pc_plus4 : ((is_lui) ? imm : (is_auipc ? pc + imm : (mem_read ? mem_data_out : alu_result)));
+    assign reg_write_data = jump
+        ? pc_plus4 // jal or jalr
+        : (is_lui)
+            ? imm // lui
+            : is_auipc 
+                ? pc + imm  // auipc
+                : mem_read 
+                    ? mem_data_out // load
+                    : alu_result; // All other instructions
 
     // Will be useful when pipelining
     assign reg_write_en = reg_write;
