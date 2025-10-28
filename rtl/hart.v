@@ -126,11 +126,17 @@ module hart #(
     // instructions, this is `o_retire_pc + 4`, but must be the branch or jump
     // target for *taken* branches and jumps.
     output wire [31:0] o_retire_next_pc
-
+   // input  wire        CLOCK_50,    // 50 MHz board clock
+   // input  wire [9:0]  SW,          // slide switches
+   // output wire [9:0]  LEDR         // red LEDs
 `ifdef RISCV_FORMAL
     ,`RVFI_OUTPUTS,
 `endif
 );
+    // assign LEDR[9:1] = SW[9:1];
+    // reg [25:0] div;
+    // always @(posedge CLOCK_50) div <= div + 1'b1;
+    // assign LEDR[0] = div[25];
 
     wire [31:0] next_pc;
     wire [31:0] instruction;
