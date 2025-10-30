@@ -8,6 +8,9 @@ module fetch #(parameter RESET_ADDR = 32'h00000000)(
     output reg [31:0] pc
 );
 
+    // TODO: Mux to take in branch and pc_plus_4, select btw if branch or jump occurs
+    // TODO: Hold old pc, and instruction (stall)
+
     // Infers PC flop with active high reset
     always @(posedge i_clk) begin
         // infer pc reg

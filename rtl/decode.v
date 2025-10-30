@@ -22,10 +22,13 @@ module decode(
     output wire halt
 );
 
+    // TODO: Correctly handle no op, make sure no reg is written to
+    // TODO: Output no op if jump or branch success from execute
 
     // Used to specific immediate format (1 hot encoding)
     wire [5:0] i_format;
 
+    //TODO: Enable bypassing
     imm u_imm (
         .i_inst (instruction),
         .i_format(i_format),

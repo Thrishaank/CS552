@@ -5,7 +5,7 @@ module writeback(
     output [31:0] reg_write_data,
     output reg_write_en
 );
-
+    // TODO: remove LUI and AUIPC from mux, will just get from execute output
 
     assign reg_write_data = jump
         ? pc_plus4 // jal or jalr

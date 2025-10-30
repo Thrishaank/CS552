@@ -7,6 +7,10 @@ module execute (
     output [31:0] next_pc, alu_result,
     output pc_write_trap
 );
+
+    // TODO: Calc pc+imm here. Mux btw pc+imm, imm, alu_out, and output to alu_result.
+    // TODO: EX-EX forwarding, pass alu-out, write address, write_en, and if alu_result, mem, imm, or imm+pc, should be written to get from output of reg between ex and mem into ex. Replace ALU input if address is same.
+    // TODO: MEM-EX Pass data out from writeback and register write address, and write_en flag back to here. If we are writing to either of our read registers, replace the value with output
     wire eq, lt;
 
     wire [31:0] result;
