@@ -13,18 +13,18 @@ module execute (
     branch_expect_n,
     jump, //Determines if we are in a jump instruction
     reg_jump, //Determines if we are in a 'jalr' jump instruction
-    wb_rw, //RW value from MEM/RB
-    mem_rw, //RW value from EX/MEM
-    rs1_val, //R1 number
-    rs2_val, //R2 number
-    exmem_rd, //RD value for EX/MEM
-    wb_rd, //RD value for MEM/WB
+    memwb_rw, //RW value from MEM/WB
+    exmem_rw, //RW value from EX/MEM
     input [2:0] i_opsel, //Operation selection
     input [31:0] reg_out_1, //R1
     reg_out_2, //R2
     imm, //Immediate
     prev_alu, //Previous ALU output for forwarding
-    prev_mem //Previous memory value for forwarding
+    prev_mem, //Previous memory value for forwarding
+    input [4:0] rs1_val, //R1 number
+    rs2_val, //R2 number
+    exmem_rd, //RD value for EX/MEM
+    memwb_rd, //RD value for MEM/WB
     output [31:0] new_pc, //New PC
     alu_result //Result
 );
@@ -44,15 +44,15 @@ module execute (
 //Forwarding unit driving forwarding muxes
 wire [1:0] fw1, fw2; //Forward controls
 assign fw1 =
-	(wb_rw && (exmem_rd != 0) && (exmem_rd == rs1_val)) ? 2'b10: //EX hazard
-	(wb_rw && (wb_rd != 0) && !(~exmem_rd || ~wb_rd) && (exmem_rd == rs1_val) &&
-	(wb_rd == rs1_val) : 2'b01 : //MEM hazard
+	(memwb_rw && (exmem_rd != 0) && (exmem_rd == rs1_val)) ? 2'b10: //EX hazard
+	(memwb_rw && (memwb_rd != 0) && !(exmem_rw &&  (exmem_rd != 0)) && (exmem_rd == rs1_val) &&
+	(memwb_rd == rs1_val) : 2'b01 : //MEM hazard
 	2'b00;	//No hazard
 
 assign fw2 =
-	(wb_rw && (exmem_rd != 0) && (exmem_rd == rs2_val)) ? 2'b10: //EX hazard
-	(wb_rw && (wb_rd != 0) && !(~exmem_rd || ~wb_rd) && (exmem_rd == rs2_val) &&
-	(wb_rd == rs2_val) : 2'b01 : //MEM hazard
+	(memwb_rw && (exmem_rd != 0) && (exmem_rd == rs2_val)) ? 2'b10: //EX hazard
+	(memwb_rw && (memwb_rd != 0) && !(exmem_rw && (exmem_rd != 0)) && (exmem_rd == rs2_val) &&
+	(memwb_rd == rs2_val) : 2'b01 : //MEM hazard
 	2'b00;	//No hazard
 // MUX for selecting forwarded R1 and R2 values
 wire [31:0] alu_op1, alu_op2; //Inputs
