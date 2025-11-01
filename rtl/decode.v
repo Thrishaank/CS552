@@ -4,6 +4,10 @@ module decode(
     input [31:0] reg_write_data,
     input [31:0] pc_plus4,
     input reg_write_en,
+    input flush_decode,     // Real pipeline flush from execute
+    // Load-use hazard inputs from EX stage (ID/EX pipeline register)
+    input ex_mem_read,      // EX stage is doing a load
+    input [4:0] ex_rd_addr, // EX stage destination register
     output branch, imm_alu, check_lt_or_eq, branch_expect_n, jump, reg_jump, 
     output i_arith, i_unsigned, i_sub,
     output [2:0] i_opsel,
@@ -12,6 +16,7 @@ module decode(
     output [31:0] imm_out,
     output mem_read, mem_write, is_word, is_h_or_b, is_unsigned_ld,
     output reg_write,
+    output stall_pipeline,  // Asserted when load-use hazard detected
     output wire is_r,
     output wire is_i,
     output wire is_s,
@@ -21,11 +26,41 @@ module decode(
     output wire decode_trap,
     output wire halt
 );
-
+    // TODO: Correctly handle no op, make sure no reg is written to //DONE
+    // TODO: Output no op if jump or branch success from execute //DONE
+    // TODO: Bypassing //DONE
 
     // Used to specific immediate format (1 hot encoding)
     wire [5:0] i_format;
 
+    // flush_decode is driven by execute via top-level wiring.
+    // When asserted for one cycle, decode outputs a bubble (NOP).
+
+    // Enable bypassing (same-cycle WB -> decode) detection.
+    // If the instruction in this cycle writes a register and also reads it,
+    // some register-file implementations may not present the just-written
+    // value on the read port. 
+    wire wb_valid        = reg_write_en & (rd_addr != 5'd0);
+    wire bypass_rs1_from_wb = wb_valid & (rd_addr == rs1_addr);
+    wire bypass_rs2_from_wb = wb_valid & (rd_addr == rs2_addr);
+
+    // Note: To utilize these, gate the operands as:
+    assign operand1 = bypass_rs1_from_wb ? reg_write_data : rf_rs1;
+    assign operand2 = bypass_rs2_from_wb ? reg_write_data : rf_rs2;
+
+    // Load-use hazard detection: When EX stage has a load instruction and
+    // the current instruction in decode uses that loaded register, stall.
+    wire rs1_used = ~is_u;  // rs1 not used by U-type (lui, auipc)
+    wire rs2_used = ~(is_i | is_u | is_j);  // rs2 not used by I, U, J types
+    
+    wire load_use_rs1 = ex_mem_read && (ex_rd_addr != 5'd0) && (ex_rd_addr == rs1_addr) && rs1_used;
+    wire load_use_rs2 = ex_mem_read && (ex_rd_addr != 5'd0) && (ex_rd_addr == rs2_addr) && rs2_used;
+    
+    // Stall pipeline when load-use hazard detected
+    assign stall_pipeline = load_use_rs1 || load_use_rs2;
+
+    // TBD: Connect flush signal: Wire (branch_taken | jump_taken) from execute → flush_decode input
+    
     imm u_imm (
         .i_inst (instruction),
         .i_format(i_format),
@@ -80,14 +115,15 @@ module decode(
 
     // Other flags to controls muxes
     assign imm_alu      = ~(is_r | is_b); // Should IMM (1) or REG2 (0) be written to ALU
-    assign reg_write    = ~(is_s | is_b); // Should we write to destination register
+    // Do not write a register for stores/branches, or on halt/illegal, or on flush (NOP behavior)
+    assign reg_write    = ~(is_s | is_b) & ~halt & ~decode_trap & ~flush_decode; // Should we write to destination register
     wire is_load        = (is_i & ~opcode[4] & ~opcode[2]); // Is this a load instruction
     assign is_unsigned_ld = (is_load && funct3[2]); // is load unsigned
-    assign mem_read     = is_load; // Should we read from memory
-    assign mem_write    = is_s; // Should we write to memory
-    assign branch       = is_b;  // Are we branching
-    assign jump         = is_j | is_jalr; // Is there a jump occurring
-    assign reg_jump     = is_jalr; // Do we have to use value from reg to jump
+    assign mem_read     = is_load & ~flush_decode; // Kill on flush
+    assign mem_write    = is_s & ~flush_decode; // Kill on flush
+    assign branch       = is_b & ~flush_decode;  // Kill on flush
+    assign jump         = (is_j | is_jalr) & ~flush_decode; // Kill on flush
+    assign reg_jump     = is_jalr & ~flush_decode; // Kill on flush
     assign is_word      = funct3[1]; // Are we dealing with word read/write
     assign is_h_or_b    = funct3[0]; // If we are not dealing with work, are we dealing with half-word (1) or byte (0)
     wire is_imm_arith   =  (is_i & opcode[4]); // Is this an arithmetic operation with imm
