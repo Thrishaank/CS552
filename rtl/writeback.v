@@ -5,17 +5,14 @@ module writeback(
     output [31:0] reg_write_data,
     output reg_write_en
 );
-    // TODO: remove LUI and AUIPC from mux, will just get from execute output
+    // TODO: remove LUI and AUIPC from mux, will just get from execute output //DONE
+    //TODO: EXECUTE OUTPUT TO BE LINKED TO HERE FOR JUMP ADDRESS 
 
     assign reg_write_data = jump
-        ? pc_plus4 // jal or jalr
-        : (is_lui)
-            ? imm // lui
-            : is_auipc 
-                ? pc + imm  // auipc
-                : mem_read 
-                    ? mem_data_out // load
-                    : alu_result; // All other instructions
+        ? pc_plus4      // jal or jalr - return address
+        : mem_read 
+            ? mem_data_out  // load instruction
+            : alu_result;   // All other instructions (including LUI, AUIPC)
 
     // Will be useful when pipelining
     assign reg_write_en = reg_write;

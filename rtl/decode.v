@@ -4,10 +4,14 @@ module decode(
     input [31:0] reg_write_data,
     input [31:0] pc_plus4,
     input reg_write_en,
-    input flush_decode,     // Real pipeline flush from execute
+    input flush_decode,     // Real pipeline flush from execute (always-not-taken predictor)
     // Load-use hazard inputs from EX stage (ID/EX pipeline register)
     input ex_mem_read,      // EX stage is doing a load
     input [4:0] ex_rd_addr, // EX stage destination register
+    input ex_reg_write,     // EX stage will write a register
+    // Forwarding inputs from MEM stage (EX/MEM pipeline register)
+    input mem_reg_write,    // MEM stage will write a register
+    input [4:0] mem_rd_addr, // MEM stage destination register
     output branch, imm_alu, check_lt_or_eq, branch_expect_n, jump, reg_jump, 
     output i_arith, i_unsigned, i_sub,
     output [2:0] i_opsel,
@@ -50,6 +54,7 @@ module decode(
 
     // Load-use hazard detection: When EX stage has a load instruction and
     // the current instruction in decode uses that loaded register, stall.
+    // Note: With EX-EX and MEM-EX forwarding, we only stall for load-use.
     wire rs1_used = ~is_u;  // rs1 not used by U-type (lui, auipc)
     wire rs2_used = ~(is_i | is_u | is_j);  // rs2 not used by I, U, J types
     
@@ -57,9 +62,18 @@ module decode(
     wire load_use_rs2 = ex_mem_read && (ex_rd_addr != 5'd0) && (ex_rd_addr == rs2_addr) && rs2_used;
     
     // Stall pipeline when load-use hazard detected
+    // With forwarding, other RAW hazards don't require stalling
     assign stall_pipeline = load_use_rs1 || load_use_rs2;
+    
+    // EX-EX forwarding (from EX/MEM register) - highest priority
+    wire ex_fwd_rs1 = ex_reg_write && (ex_rd_addr != 5'd0) && (ex_rd_addr == rs1_addr) && rs1_used;
+    wire ex_fwd_rs2 = ex_reg_write && (ex_rd_addr != 5'd0) && (ex_rd_addr == rs2_addr) && rs2_used;
+    
+    // MEM-EX forwarding (from MEM/WB register) - lower priority (only if EX doesn't forward)
+    wire mem_fwd_rs1 = mem_reg_write && (mem_rd_addr != 5'd0) && (mem_rd_addr == rs1_addr) && rs1_used && !ex_fwd_rs1;
+    wire mem_fwd_rs2 = mem_reg_write && (mem_rd_addr != 5'd0) && (mem_rd_addr == rs2_addr) && rs2_used && !ex_fwd_rs2;
 
-    // TBD: Connect flush signal: Wire (branch_taken | jump_taken) from execute → flush_decode input
+    // TODO: Connect flush signal: Wire (branch_taken | jump_taken) from execute → flush_decode input
     
     imm u_imm (
         .i_inst (instruction),

@@ -1,6 +1,8 @@
 module fetch #(parameter RESET_ADDR = 32'h00000000)(
     input i_clk, i_rst,
-    input [31:0] next_pc,
+    input [31:0] branch_target,  // Branch/jump target address ((replace with execute equivalent))
+    input branch_taken,          // Branch was taken (replace with execute equivalent)
+    input jump_taken,            // Jump occurred (replace with execute equivalent)
     input [31:0] i_imem_rdata,
     input stall,  // Stall signal from hazard detection (hold PC and instruction)
     output [31:0] o_imem_raddr,
@@ -9,7 +11,10 @@ module fetch #(parameter RESET_ADDR = 32'h00000000)(
     output reg [31:0] pc
 );
 
-    // TODO: Mux to take in branch and pc_plus_4, select btw if branch or jump occurs // DONE
+    // TODO: Mux to take in branch and pc_plus_4, select btw if branch or jump occurs //DONE
+    // Mux: select between pc_plus4 (normal) or branch_target (when branch/jump taken)
+    wire [31:0] next_pc;
+    assign next_pc = (branch_taken | jump_taken) ? branch_target : pc_plus4;
     
     // TODO: Hold old pc, and instruction (stall) // DONE
 
