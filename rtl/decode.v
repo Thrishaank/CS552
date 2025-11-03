@@ -44,13 +44,13 @@ module decode(
     // If the instruction in this cycle writes a register and also reads it,
     // some register-file implementations may not present the just-written
     // value on the read port. 
-    wire wb_valid        = reg_write_en & (rd_addr != 5'd0);
-    wire bypass_rs1_from_wb = wb_valid & (rd_addr == rs1_addr);
-    wire bypass_rs2_from_wb = wb_valid & (rd_addr == rs2_addr);
+    // wire wb_valid        = reg_write_en & (rd_addr != 5'd0);
+    // wire bypass_rs1_from_wb = wb_valid & (rd_addr == rs1_addr);
+    // wire bypass_rs2_from_wb = wb_valid & (rd_addr == rs2_addr);
 
     // Note: To utilize these, gate the operands as:
-    assign operand1 = bypass_rs1_from_wb ? reg_write_data : rf_rs1;
-    assign operand2 = bypass_rs2_from_wb ? reg_write_data : rf_rs2;
+    // assign operand1 = bypass_rs1_from_wb ? reg_write_data : rf_rs1;
+    // assign operand2 = bypass_rs2_from_wb ? reg_write_data : rf_rs2;
 
     // Load-use hazard detection: When EX stage has a load instruction and
     // the current instruction in decode uses that loaded register, stall.
@@ -66,14 +66,18 @@ module decode(
     assign stall_pipeline = load_use_rs1 || load_use_rs2;
     
     // EX-EX forwarding (from EX/MEM register) - highest priority
-    wire ex_fwd_rs1 = ex_reg_write && (ex_rd_addr != 5'd0) && (ex_rd_addr == rs1_addr) && rs1_used;
-    wire ex_fwd_rs2 = ex_reg_write && (ex_rd_addr != 5'd0) && (ex_rd_addr == rs2_addr) && rs2_used;
+    // wire ex_fwd_rs1 = ex_reg_write && (ex_rd_addr != 5'd0) && (ex_rd_addr == rs1_addr) && rs1_used;
+    // wire ex_fwd_rs2 = ex_reg_write && (ex_rd_addr != 5'd0) && (ex_rd_addr == rs2_addr) && rs2_used;
     
     // MEM-EX forwarding (from MEM/WB register) - lower priority (only if EX doesn't forward)
-    wire mem_fwd_rs1 = mem_reg_write && (mem_rd_addr != 5'd0) && (mem_rd_addr == rs1_addr) && rs1_used && !ex_fwd_rs1;
-    wire mem_fwd_rs2 = mem_reg_write && (mem_rd_addr != 5'd0) && (mem_rd_addr == rs2_addr) && rs2_used && !ex_fwd_rs2;
+    // wire mem_fwd_rs1 = mem_reg_write && (mem_rd_addr != 5'd0) && (mem_rd_addr == rs1_addr) && rs1_used && !ex_fwd_rs1;
+    // wire mem_fwd_rs2 = mem_reg_write && (mem_rd_addr != 5'd0) && (mem_rd_addr == rs2_addr) && rs2_used && !ex_fwd_rs2;
 
-    // TODO: Connect flush signal: Wire (branch_taken | jump_taken) from execute → flush_decode input
+    // Flush implementation:
+    // - flush_decode input (line 7) will be connected to execute.o_flush_pipeline in hart.v
+    // - execute.o_flush_pipeline = o_branch_taken | i_jump (asserted when control flow changes)
+    // - When flush_decode=1, all control signals are disabled (lines 139-145) creating a NOP
+    // - This implements recovery for the always-not-taken branch predictor
     
     imm u_imm (
         .i_inst (instruction),
