@@ -13,8 +13,8 @@ module execute (
     input branch_expect_n, // Expected branch outcome (1 = not equal/greater than, 0 = equal/less than)
     input jump, // Determines if we are in a jump instruction
     input is_jalr, // Determines if we are in a 'jalr' jump instruction
-    input memwb_rw, // RW value from MEM/WB
-    input exmem_rw, // RW value from EX/MEM
+    input mem_wb_reg_write_en, // Write Enable from MEM/WB
+    input ex_mem_reg_write_en, // Write Enable from EX/MEM
     input [2:0] i_opsel, // Operation selection
     input [31:0] reg_out_1, // R1
     input [31:0] reg_out_2, // R2
@@ -23,8 +23,8 @@ module execute (
     input [31:0] prev_mem, //Previous memory value for forwarding
     input [4:0] rs1_val, //R1 number
     input [4:0] rs2_val, // R2 number
-    input [4:0] exmem_rd, // RD value for EX/MEM
-    input [4:0] memwb_rd, // RD value for MEM/WB
+    input [4:0] ex_mem_dest_addr, // RD value for EX/MEM
+    input [4:0] mem_wb_dest_addr, // RD value for MEM/WB
     output [31:0] new_pc, // New PC
     output [31:0] alu_result, // Result
     output o_branch_taken
@@ -44,23 +44,24 @@ module execute (
 
     assign pc_plus_offset = (i_jump | branch_taken) ? 
                     (pc_plus_imm) : (pc_plus4);
-                    
+
     assign o_branch_taken = branch_taken;
 
     assign new_pc = (is_jalr) ? {alu_result[31:1], 1'b0} : pc_plus_offset;
 
 //Forwarding unit driving forwarding muxes
 wire [1:0] fw1, fw2; //Forward controls
+
 assign fw1 =
-	(memwb_rw && (exmem_rd != 0) && (exmem_rd == rs1_val)) ? 2'b10: //EX hazard
-	(memwb_rw && (memwb_rd != 0) && !(exmem_rw &&  (exmem_rd != 0)) && (exmem_rd == rs1_val) &&
-	(memwb_rd == rs1_val) : 2'b01 : //MEM hazard
+	(mem_wb_reg_write_en && |ex_mem_dest_addr && (ex_mem_dest_addr == rs1_val)) ? 2'b10: //EX hazard
+	(mem_wb_reg_write_en && |mem_wb_dest_addr && !(ex_mem_reg_write_en &&  |ex_mem_dest_addr)) && (ex_mem_dest_addr == rs1_val) &&
+	(mem_wb_dest_addr == rs1_val) : 2'b01 : //MEM hazard
 	2'b00;	//No hazard
 
 assign fw2 =
-	(memwb_rw && (exmem_rd != 0) && (exmem_rd == rs2_val)) ? 2'b10: //EX hazard
-	(memwb_rw && (memwb_rd != 0) && !(exmem_rw && (exmem_rd != 0)) && (exmem_rd == rs2_val) &&
-	(memwb_rd == rs2_val) : 2'b01 : //MEM hazard
+	(mem_wb_reg_write_en && |ex_mem_dest_addr && (ex_mem_dest_addr == rs2_val)) ? 2'b10: //EX hazard
+	(mem_wb_reg_write_en && |mem_wb_dest_addr && !(ex_mem_reg_write_en && |ex_mem_dest_addr) && (ex_mem_dest_addr == rs2_val) &&
+	(mem_wb_dest_addr == rs2_val)) : 2'b01 : //MEM hazard
 	2'b00;	//No hazard
 // MUX for selecting forwarded R1 and R2 values
 wire [31:0] alu_op1, alu_op2; //Inputs
