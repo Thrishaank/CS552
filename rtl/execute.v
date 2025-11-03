@@ -1,37 +1,86 @@
 module execute (
-    input i_clk, i_rst,
-    input [31:0] pc, pc_plus4,
-    input branch, imm_alu, i_arith, i_unsigned, i_sub, check_lt_or_eq, branch_expect_n, jump, reg_jump,
-    input [2:0] i_opsel,
-    input [31:0] reg_out_1, reg_out_2, imm,
-    output [31:0] next_pc, alu_result,
-    output pc_write_trap
+    input clk, i_rst,
+    input [31:0] pc,
+    input branch, // Determines whether we are branching
+    input memRead, // Determines if we are reading from memory
+    input memWrite, // Determines if we are writing to memory
+    input reg_write, // Determines if we are writing to the register file
+    input imm_alu, // Determines if we are using an immediate operation
+    input i_arith, // Determines if shift right is arithmetic
+    input i_unsigned, // Determines if comparison is unsigned
+    input i_sub, // Determines if addition subtracts
+    input check_lt_or_eq, // Determines if we are checking less than or equal (1) or equal (0)
+    input branch_expect_n, // Expected branch outcome (1 = not equal/greater than, 0 = equal/less than)
+    input jump, // Determines if we are in a jump instruction
+    input is_jalr, // Determines if we are in a 'jalr' jump instruction
+    input memwb_rw, // RW value from MEM/WB
+    input exmem_rw, // RW value from EX/MEM
+    input [2:0] i_opsel, // Operation selection
+    input [31:0] reg_out_1, // R1
+    input [31:0] reg_out_2, // R2
+    input [31:0] imm, // Immediate
+    input [31:0] prev_alu, //Previous ALU output for forwarding
+    input [31:0] prev_mem, //Previous memory value for forwarding
+    input [4:0] rs1_val, //R1 number
+    input [4:0] rs2_val, // R2 number
+    input [4:0] exmem_rd, // RD value for EX/MEM
+    input [4:0] memwb_rd, // RD value for MEM/WB
+    output [31:0] new_pc, // New PC
+    output [31:0] alu_result, // Result
+    output o_branch_taken
 );
-
-    // TODO: Calc pc+imm here. Mux btw pc+imm, imm, alu_out, and output to alu_result.
-    // TODO: EX-EX forwarding, pass alu-out, write address, write_en, and if alu_result, mem, imm, or imm+pc, should be written to get from output of reg between ex and mem into ex. Replace ALU input if address is same.
-    // TODO: MEM-EX Pass data out from writeback and register write address, and write_en flag back to here. If we are writing to either of our read registers, replace the value with output
+    // Branch code
     wire eq, lt;
-
+    wire [31:0] pc_plus4 = pc + 4;
+    wire [31:0] pc_plus_imm = pc + imm;
     wire [31:0] result;
 
     wire [31:0] pc_plus_offset;
+    wire branch_taken;
 
-    assign pc_plus_offset = (jump | (branch & 
-        ((check_lt_or_eq) ? (branch_expect_n ^ lt) : (branch_expect_n ^ eq)))) // Check if branch is successful
-            ? pc + imm // jal or successful branch
-            : pc_plus4; // unsuccessful branch or other instruction;
+    assign branch_taken = branch ? 
+	    		{i_check_lt_or_eq ? (i_branch_expect_n ^ lt):
+	    		(i_branch_expect_n ^ eq)} : 0;
 
-    assign next_pc = reg_jump
-         ? {alu_result[31:1], 1'b0} // jalr
-         : pc_plus_offset; // Anything else
+    assign pc_plus_offset = (i_jump | branch_taken) ? 
+                    (pc_plus_imm) : (pc_plus4);
+                    
+    assign o_branch_taken = branch_taken;
 
-    assign pc_write_trap = |next_pc[1:0];
+    assign new_pc = (is_jalr) ? {alu_result[31:1], 1'b0} : pc_plus_offset;
 
-    wire [31:0] i_op2; 
-    assign i_op2 = imm_alu 
-                    ? imm // Use immediate as 2nd operand for instructions which use it
-                    : reg_out_2; // Select register as 2nd operand for all other instructions
-    alu iALU1(.i_opsel(i_opsel), .i_sub(i_sub), .i_unsigned(i_unsigned), .i_arith(i_arith),
-        .i_op1(reg_out_1), .i_op2(i_op2), .o_result(alu_result), .o_eq(eq), .o_slt(lt));
+//Forwarding unit driving forwarding muxes
+wire [1:0] fw1, fw2; //Forward controls
+assign fw1 =
+	(memwb_rw && (exmem_rd != 0) && (exmem_rd == rs1_val)) ? 2'b10: //EX hazard
+	(memwb_rw && (memwb_rd != 0) && !(exmem_rw &&  (exmem_rd != 0)) && (exmem_rd == rs1_val) &&
+	(memwb_rd == rs1_val) : 2'b01 : //MEM hazard
+	2'b00;	//No hazard
+
+assign fw2 =
+	(memwb_rw && (exmem_rd != 0) && (exmem_rd == rs2_val)) ? 2'b10: //EX hazard
+	(memwb_rw && (memwb_rd != 0) && !(exmem_rw && (exmem_rd != 0)) && (exmem_rd == rs2_val) &&
+	(memwb_rd == rs2_val) : 2'b01 : //MEM hazard
+	2'b00;	//No hazard
+// MUX for selecting forwarded R1 and R2 values
+wire [31:0] alu_op1, alu_op2; //Inputs
+
+assign alu_op1 = (fw1 == 2'b00) ? reg_out_1:
+		(fw1 == 2'b10) ? prev_alu:
+		(fw1 == 2'b01) ? prev_mem:
+		reg_out_1;
+
+assign alu_op2 = (fw1 == 2'b00) ? reg_out_2:
+		(fw1 == 2'b10) ? prev_alu:
+		(fw1 == 2'b01) ? prev_mem:
+		reg_out_2;
+
+// MUX for selecting R2 or IMM
+wire [31:0] immVal; 
+assign immVal = (imm_alu) ? imm : alu_op2;
+
+//ALU Instantiation
+alu iALU1(.i_opsel(i_opsel), .i_sub(i_sub), .i_unsigned(i_unsigned), .i_arith(i_arith),
+	.i_op1(alu_op1), .i_op2(immVal), .o_result(alu_result), .o_seq(eq), .o_slt(lt));
+
 endmodule
