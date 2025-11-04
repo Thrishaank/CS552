@@ -4,8 +4,8 @@ module mem_wb_reg(
     input i_mem_read, i_reg_write,
     input [31:0] i_mem_data_out, i_alu_result,
     // Outputs
-    input o_em_read, o_reg_write,
-    input [31:0] o_mem_data_out, o_alu_result,
+    output o_em_read, o_reg_write,
+    output [31:0] o_mem_data_out, o_alu_result,
 );
 
 wire [31:0] NOP = 32'h00000013;
