@@ -16,6 +16,11 @@ module id_ex_reg (
     input  wire [ 4:0] i_rs1_addr,    // Source register 1 address (for forwarding)
     input  wire [ 4:0] i_rs2_addr,    // Source register 2 address (for forwarding)
     input  wire [ 4:0] i_rd_addr,     // Destination register address
+
+    input wire i_rs1_used,
+    output wire o_rs1_used,
+    input wire i_rs2_used,
+    output wire o_rs2_used,
     
     // Control signals from ID stage - Memory operations
     input  wire        i_mem_read,    // Memory read enable
@@ -25,7 +30,7 @@ module id_ex_reg (
     input  wire        i_is_unsigned_ld, // Unsigned load
     
     // Control signals - ALU/Execute operations
-    input  wire        i_reg_write,   // Register write enable
+    input  wire        i_reg_write_en,   // Register write enable
     input  wire        i_imm_alu,     // Use immediate in ALU (vs reg)
     input  wire        i_i_arith,     // Arithmetic shift right
     input  wire        i_i_unsigned,  // Unsigned comparison
@@ -37,13 +42,17 @@ module id_ex_reg (
     // Control signals - Branch/Jump operations
     input  wire        i_branch,      // Branch instruction
     input  wire        i_jump,        // Jump instruction
-    input  wire        i_reg_jump,    // Register-based jump (JALR)
+    input  wire        i_is_jalr,    // Register-based jump (JALR)
     input  wire        i_check_lt_or_eq,   // Check less-than or equal for branch
     input  wire        i_branch_expect_n,  // Branch prediction (not taken)
     
     // Exception/Control flow
     input  wire        i_decode_trap, // Decode trap flag
     input  wire        i_halt,        // Halt instruction
+    input  wire        i_valid,
+
+    input wire [31:0] i_instruction,
+    output wire [31:0] o_instruction,
     
     // Data path outputs to EX stage
     output wire [31:0] o_pc,
@@ -62,7 +71,7 @@ module id_ex_reg (
     output wire        o_is_unsigned_ld,
     
     // Control outputs - ALU/Execute operations
-    output wire        o_reg_write,
+    output wire        o_reg_write_en,
     output wire        o_imm_alu,
     output wire        o_i_arith,
     output wire        o_i_unsigned,
@@ -74,13 +83,14 @@ module id_ex_reg (
     // Control outputs - Branch/Jump operations
     output wire        o_branch,
     output wire        o_jump,
-    output wire        o_reg_jump,
+    output wire        o_is_jalr,
     output wire        o_check_lt_or_eq,
     output wire        o_branch_expect_n,
     
     // Exception/Control flow outputs
     output wire        o_decode_trap,
-    output wire        o_halt
+    output wire        o_halt,
+    output wire        o_valid
 );
 
     // Internal wires for mux outputs (D inputs to flip-flops)
@@ -97,7 +107,7 @@ module id_ex_reg (
     wire        d_is_auipc, d_is_lui;
     
     // Branch/Jump control
-    wire        d_branch, d_jump, d_reg_jump, d_check_lt_or_eq, d_branch_expect_n;
+    wire        d_branch, d_jump, d_is_jalr, d_check_lt_or_eq, d_branch_expect_n;
     
     // Exception/Control
     wire        d_decode_trap, d_halt;
@@ -127,7 +137,7 @@ module id_ex_reg (
     assign d_is_unsigned_ld = i_stall ? o_is_unsigned_ld : i_is_unsigned_ld;
     
     // ALU control signals
-    assign d_reg_write  = i_stall ? o_reg_write  : i_reg_write;
+    assign d_reg_write  = i_stall ? o_reg_write_en  : i_reg_write_en;
     assign d_imm_alu    = i_stall ? o_imm_alu    : i_imm_alu;
     assign d_i_arith    = i_stall ? o_i_arith    : i_i_arith;
     assign d_i_unsigned = i_stall ? o_i_unsigned : i_i_unsigned;
@@ -139,7 +149,7 @@ module id_ex_reg (
     // Branch/Jump control signals
     assign d_branch          = i_stall ? o_branch          : i_branch;
     assign d_jump            = i_stall ? o_jump            : i_jump;
-    assign d_reg_jump        = i_stall ? o_reg_jump        : i_reg_jump;
+    assign d_is_jalr        = i_stall ? o_is_jalr        : i_is_jalr;
     assign d_check_lt_or_eq  = i_stall ? o_check_lt_or_eq  : i_check_lt_or_eq;
     assign d_branch_expect_n = i_stall ? o_branch_expect_n : i_branch_expect_n;
     
@@ -156,7 +166,8 @@ module id_ex_reg (
     d_ff #(.WIDTH(32), .RST_VAL(32'h00000000)) ff_reg_out_1 (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_reg_out_1), .q(o_reg_out_1));
     d_ff #(.WIDTH(32), .RST_VAL(32'h00000000)) ff_reg_out_2 (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_reg_out_2), .q(o_reg_out_2));
     d_ff #(.WIDTH(32), .RST_VAL(32'h00000000)) ff_imm       (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_imm),       .q(o_imm));
-    
+    d_ff #(.WIDTH(32), .RST_VAL(32'h00000013)) ff_instruction (.i_clk(i_clk), .i_rst(rst_or_flush), .d(i_stall ? o_instruction : i_instruction), .q(o_instruction));
+
     // Address flip-flops (5-bit) - for forwarding unit
     d_ff #(.WIDTH(5), .RST_VAL(5'h00)) ff_rs1_addr (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_rs1_addr), .q(o_rs1_addr));
     d_ff #(.WIDTH(5), .RST_VAL(5'h00)) ff_rs2_addr (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_rs2_addr), .q(o_rs2_addr));
@@ -170,7 +181,7 @@ module id_ex_reg (
     d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_is_unsigned_ld (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_is_unsigned_ld), .q(o_is_unsigned_ld));
     
     // ALU control flip-flops
-    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_reg_write  (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_reg_write),  .q(o_reg_write));
+    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_reg_write  (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_reg_write),  .q(o_reg_write_en));
     d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_imm_alu    (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_imm_alu),    .q(o_imm_alu));
     d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_i_arith    (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_i_arith),    .q(o_i_arith));
     d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_i_unsigned (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_i_unsigned), .q(o_i_unsigned));
@@ -180,15 +191,16 @@ module id_ex_reg (
     d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_is_lui     (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_is_lui),     .q(o_is_lui));
     
     // Branch/Jump control flip-flops
-    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_branch          (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_branch),          .q(o_branch));
-    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_jump            (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_jump),            .q(o_jump));
-    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_reg_jump        (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_reg_jump),        .q(o_reg_jump));
-    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_check_lt_or_eq  (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_check_lt_or_eq),  .q(o_check_lt_or_eq));
-    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_branch_expect_n (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_branch_expect_n), .q(o_branch_expect_n));
+    d_ff ff_branch          (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_branch),          .q(o_branch));
+    d_ff ff_jump            (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_jump),            .q(o_jump));
+    d_ff ff_jalr           (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_is_jalr),        .q(o_is_jalr));
+    d_ff ff_check_lt_or_eq  (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_check_lt_or_eq),  .q(o_check_lt_or_eq));
+    d_ff ff_branch_expect_n (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_branch_expect_n), .q(o_branch_expect_n));
     
     // Exception/Control flip-flops
-    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_decode_trap (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_decode_trap), .q(o_decode_trap));
-    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_halt        (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_halt),        .q(o_halt));
+    d_ff ff_decode_trap (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_decode_trap), .q(o_decode_trap));
+    d_ff ff_halt        (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_halt),        .q(o_halt));
+    d_ff ff_valid       (.i_clk(i_clk), .i_rst(rst_or_flush), .d(i_stall ? 1'b0 : i_valid), .q(o_valid));
 
 endmodule
 
