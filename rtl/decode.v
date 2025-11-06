@@ -6,6 +6,7 @@ module decode(
     // Forwarding inputs from MEM stage (EX/MEM pipeline register)
     input [4:0] mem_rd_addr, // MEM stage destination register
     input ex_mem_read,      // EX stage is load instruction
+    input prev_valid,      // Previous stage valid signal
     input [4:0] ex_rd_addr,  // EX stage destination register
     output branch, imm_alu, check_lt_or_eq, branch_expect_n, jump, is_jalr,
     output i_arith, i_unsigned, i_sub,
@@ -44,7 +45,7 @@ module decode(
     // With forwarding, other RAW hazards don't require stalling
     assign stall_pipeline = load_use_rs1 | load_use_rs2;
 
-    assign valid = ~stall_pipeline & ~flush_decode;
+    assign valid = prev_valid & ~stall_pipeline /*& ~flush_decode*/;
     
     // Flush implementation:
     // - flush_decode input (line 7) will be connected to execute.o_flush_pipeline in hart.v
@@ -105,14 +106,14 @@ module decode(
     // Other flags to controls muxes
     assign imm_alu      = ~(is_r | is_b); // Should IMM (1) or REG2 (0) be written to ALU
     // Do not write a register for stores/branches, or on halt/illegal, or on flush (NOP behavior)
-    assign reg_write_en    = ~(is_s | is_b) & ~halt & ~decode_trap & ~flush_decode; // Should we write to destination register
+    assign reg_write_en    = ~(is_s | is_b) & ~halt /*& ~decode_trap & ~flush_decode*/; // Should we write to destination register
     wire is_load        = (is_i & ~opcode[4] & ~opcode[2]); // Is this a load instruction
     assign is_unsigned_ld = (is_load && funct3[2]); // is load unsigned
-    assign mem_read     = is_load & ~flush_decode; // Kill on flush
-    assign mem_write    = is_s & ~flush_decode; // Kill on flush
-    assign branch       = is_b & ~flush_decode;  // Kill on flush
-    assign jump         = (is_j | is_jalr) & ~flush_decode; // Kill on flush
-    assign is_jalr     = opcode == JALR & ~flush_decode; // Kill on flush
+    assign mem_read     = is_load /* ~flush_decode*/; // Kill on flush
+    assign mem_write    = is_s /*& ~flush_decode*/; // Kill on flush
+    assign branch       = is_b /*& ~flush_decode*/;  // Kill on flush
+    assign jump         = (is_j | is_jalr) /*& ~flush_decode*/; // Kill on flush
+    assign is_jalr     = opcode == JALR /*& ~flush_decode*/; // Kill on flush
     assign is_word      = funct3[1]; // Are we dealing with word read/write
     assign is_h_or_b    = funct3[0]; // If we are not dealing with work, are we dealing with half-word (1) or byte (0)
     wire is_imm_arith   =  (is_i & opcode[4]); // Is this an arithmetic operation with imm

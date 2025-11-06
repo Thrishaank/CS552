@@ -114,7 +114,7 @@ module id_ex_reg (
     
     // Reset signal: combine rst and flush (clear pipeline bubble on flush)
     wire rst_or_flush;
-    assign rst_or_flush = i_rst | i_flush;
+    assign rst_or_flush = i_rst /*| i_flush*/;
     
     // ====================================================================
     // Stall Multiplexers: When stalled, hold current output value
@@ -196,6 +196,11 @@ module id_ex_reg (
     d_ff ff_jalr           (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_is_jalr),        .q(o_is_jalr));
     d_ff ff_check_lt_or_eq  (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_check_lt_or_eq),  .q(o_check_lt_or_eq));
     d_ff ff_branch_expect_n (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_branch_expect_n), .q(o_branch_expect_n));
+
+    // Signals for retire flip-flops
+
+    d_ff rs1_used_dff(.i_rst(rst_or_flush), .i_clk(i_clk), .d(i_rs1_used), .q(o_rs1_used));
+    d_ff rs2_used_dff(.i_rst(rst_or_flush), .i_clk(i_clk), .d(i_rs2_used), .q(o_rs2_used));
     
     // Exception/Control flip-flops
     d_ff ff_decode_trap (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_decode_trap), .q(o_decode_trap));

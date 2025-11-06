@@ -2,9 +2,6 @@ module execute (
     input i_clk, i_rst,
     input [31:0] pc,
     input branch, // Determines whether we are branching
-    input memRead, // Determines if we are reading from memory
-    input memWrite, // Determines if we are writing to memory
-    input reg_write, // Determines if we are writing to the register file
     input imm_alu, // Determines if we are using an immediate operation
     input i_arith, // Determines if shift right is arithmetic
     input i_unsigned, // Determines if comparison is unsigned
@@ -21,8 +18,8 @@ module execute (
     input [31:0] reg_out_1, // R1
     input [31:0] reg_out_2, // R2
     input [31:0] imm, // Immediate
-    input [31:0] prev_alu, //Previous ALU output for forwarding
-    input [31:0] prev_mem, //Previous memory value for forwarding
+    input [31:0] ex_mem_data, //Previous ALU output for forwarding
+    input [31:0] mem_wb_data, //Previous memory value for forwarding
     input wire rs1_used, rs2_used, // Whether rs1 and rs2 are used
     input [4:0] rs1_addr, //R1 number
     input [4:0] rs2_addr, // R2 number
@@ -40,6 +37,8 @@ module execute (
     wire [31:0] result;
 
     wire [31:0] pc_plus_offset;
+
+    wire [31:0] alu_op1, alu_op2;
     wire branch_taken;
 
     assign branch_taken = branch ? 
@@ -56,13 +55,13 @@ module execute (
     assign pc_write_trap = |new_pc[1:0];
 
     assign alu_op1 =
-        (rs1_used && ex_mem_reg_write_en && |ex_mem_dest_addr && (ex_mem_dest_addr == rs1_addr)) ? prev_alu : //EX hazard
-        (rs1_used && mem_wb_reg_write_en && |mem_wb_dest_addr && (mem_wb_dest_addr == rs1_addr)) ? prev_mem : //MEM hazard
+        (rs1_used && ex_mem_reg_write_en && |ex_mem_dest_addr && (ex_mem_dest_addr == rs1_addr)) ? ex_mem_data : //EX hazard
+        (rs1_used && mem_wb_reg_write_en && |mem_wb_dest_addr && (mem_wb_dest_addr == rs1_addr)) ? mem_wb_data : //MEM hazard
         reg_out_1;	//No hazard
 
     assign alu_op2 = imm_alu ? imm : // Immediate operation
-        (rs2_used && ex_mem_reg_write_en && |ex_mem_dest_addr && (ex_mem_dest_addr == rs2_addr)) ? prev_alu : //EX hazard
-        (rs2_used && mem_wb_reg_write_en && |mem_wb_dest_addr && (mem_wb_dest_addr == rs2_addr)) ? prev_mem : //MEM hazard
+        (rs2_used && ex_mem_reg_write_en && |ex_mem_dest_addr && (ex_mem_dest_addr == rs2_addr)) ? ex_mem_data : //EX hazard
+        (rs2_used && mem_wb_reg_write_en && |mem_wb_dest_addr && (mem_wb_dest_addr == rs2_addr)) ? mem_wb_data : //MEM hazard
         reg_out_2;	//No hazard
 
     //ALU Instantiation

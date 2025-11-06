@@ -1,14 +1,12 @@
 module writeback(
     input i_clk, i_rst,
-    input mem_read, reg_write,
+    input mem_read,
     input [31:0] mem_data_out, ex_data_out,
-    output [31:0] reg_write_data,
-    output reg_write_en
+    output [31:0] reg_write_data
 );
     // TODO: remove LUI and AUIPC from mux, will just get from execute output
 
     assign reg_write_data = mem_read ? mem_data_out : ex_data_out;
-    assign reg_write_en = reg_write;
 
     /* KEPT IF NEEDED IN FUTURE
     assign reg_write_data = jump
