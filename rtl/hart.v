@@ -125,188 +125,386 @@ module hart #(
     // the next program counter after the instruction is retired. For most
     // instructions, this is `o_retire_pc + 4`, but must be the branch or jump
     // target for *taken* branches and jumps.
-    output wire [31:0] o_retire_next_pc
-   // input  wire        CLOCK_50,    // 50 MHz board clock
-   // input  wire [9:0]  SW,          // slide switches
-   // output wire [9:0]  LEDR         // red LEDs
+    output wire [31:0] o_retire_next_pc,
+
+    output wire [31:0] o_retire_dmem_addr,
+    output wire        o_retire_dmem_ren,
+    output wire        o_retire_dmem_wen,
+    output wire  [3:0] o_retire_dmem_mask,
+    output wire [31:0] o_retire_dmem_wdata,
+    output wire [31:0] o_retire_dmem_rdata
 `ifdef RISCV_FORMAL
     ,`RVFI_OUTPUTS,
 `endif
 );
-    // assign LEDR[9:1] = SW[9:1];
-    // reg [25:0] div;
-    // always @(posedge CLOCK_50) div <= div + 1'b1;
-    // assign LEDR[0] = div[25];
+    // Internal wires and registers.
+    wire [31:0] instruction_id, instruction_ex, instruction_mem, instruction_wb;
+    wire [31:0] pc_if, pc_id, pc_ex, pc_mem, pc_wb;
+    wire [31:0] new_pc_ex, new_pc_mem, new_pc_wb;
+    wire rs1_used_id, rs1_used_ex, rs1_used_mem, rs1_used_wb;
+    wire rs2_used_id, rs2_used_ex, rs2_used_mem, rs2_used_wb;
+    wire [4:0] rs1_addr_id, rs1_addr_ex, rs1_addr_mem, rs1_addr_wb;
+    wire [4:0] rs2_addr_id, rs2_addr_ex, rs2_addr_mem, rs2_addr_wb;
+    wire [4:0] rd_addr_id, rd_addr_ex, rd_addr_mem, rd_addr_wb;
+    wire [31:0] reg_out_1_id, reg_out_1_ex, reg_out_1_mem, reg_out_1_wb;
+    wire [31:0] reg_out_2_id, reg_out_2_ex, reg_out_2_mem, reg_out_2_wb;
+    wire [31:0] imm_id, imm_ex;
+    wire branch_taken;
+    wire stall;
+    
+    wire valid_if, valid_id, valid_ex, valid_mem, valid_wb;
+    wire prev_valid_if;
+    wire [31:0] reg_write_data_wb;
+    wire pc_write_trap, mem_trap, decode_trap;
+    wire branch_id, branch_ex;
+    wire jump_id, jump_ex;
+    wire is_jalr_id, is_jalr_ex;
+    wire check_lt_or_eq_id, check_lt_or_eq_ex;
+    wire branch_expect_n_id, branch_expect_n_ex;
+    wire i_arith_id, i_arith_ex;
+    wire i_unsigned_id, i_unsigned_ex;
+    wire i_sub_id, i_sub_ex;
+    wire [2:0] i_opsel_id, i_opsel_ex;
+    wire is_auipc_id, is_auipc_ex;
+    wire is_lui_id, is_lui_ex;
+    wire halt_id, halt_ex, halt_mem, halt_wb;
+    wire decode_trap_id, decode_trap_ex;
+    wire imm_alu_id, imm_alu_ex;
+    wire mem_read_id, mem_read_ex, mem_read_mem, mem_read_wb;
+    wire mem_write_id, mem_write_ex, mem_write_mem;
+    wire is_word_id, is_word_ex, is_word_mem;
+    wire is_h_or_b_id, is_h_or_b_ex, is_h_or_b_mem;
+    wire is_unsigned_ld_id, is_unsigned_ld_ex, is_unsigned_ld_mem;
+    wire reg_write_en_id, reg_write_en_ex, reg_write_en_mem, reg_write_en_wb;
+    wire [31:0] ex_data_out_ex, ex_data_out_mem, ex_data_out_wb;
+    wire [31:0] mem_data_out_mem, mem_data_out_wb;
 
-    wire [31:0] next_pc;
-    wire [31:0] instruction;
-    wire [31:0] pc_plus4;
-    wire [31:0] pc;
-    wire [31:0] reg_write_data;
-
-
-    // Intermediate signals between stages
-    // Decode outputs
-    wire        branch, mem_read, mem_write, reg_write, imm_alu, reg_write_en;
-    wire        check_lt_or_eq, branch_expect_n, jump, reg_jump;
-    wire        is_word, is_h_or_b, is_unsigned_ld;
-    wire        is_auipc, is_lui;
-    wire        i_arith, i_unsigned, i_sub;
-    wire [2:0]  i_opsel;
-    wire [31:0] reg_out_1, reg_out_2, imm;
-    wire [4:0]  rd_addr, rs1_addr, rs2_addr;
-    wire decode_trap, mem_trap, pc_write_trap;
-
-    wire is_r;
-    wire is_i;
-    wire is_s;
-    wire is_b;
-    wire is_u;
-    wire is_j;
-
-    // Execute outputs
-    wire [31:0] alu_result;
-    // Memory outputs
-    wire [31:0] mem_data_out;
+    // For now, disable stalling (can be enhanced later for hazard detection)
+    assign stall = 1'b0;
+    
+    // Initialize trap signals (can be enhanced later with proper trap detection)
+    assign pc_write_trap = 1'b0;  // No PC alignment traps for now
+    assign mem_trap = 1'b0;       // No memory alignment traps for now
 
     // Connect fetch module
-
     fetch #(.RESET_ADDR(RESET_ADDR)) Fetch(
         .i_clk(i_clk), 
         .i_rst(i_rst), 
-        .next_pc(next_pc), 
-        .i_imem_rdata(i_imem_rdata), 
+        .new_pc(new_pc_ex), 
+        .stall(1'b0),
+        .branch_taken(branch_taken),
         .o_imem_raddr(o_imem_raddr), 
-        .instruction(instruction), 
-        .pc_plus4(pc_plus4), 
-        .pc(pc)
+        .pc(pc_if),
+        .valid(valid_if)
     );
 
-    assign o_retire_inst = instruction;
-    assign o_retire_pc = pc;
+    if_id_reg IF_ID_Reg(
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .i_stall(1'b0),
+        .i_flush(branch_taken),
+        .i_instruction(i_imem_rdata),
+        .o_instruction(instruction_id),
+        .i_pc(pc_if),
+        .o_pc(pc_id),
+        .i_valid(valid_if),
+        .o_valid(prev_valid_if)
+    );
 
     decode Decode(
         .i_clk(i_clk), 
         .i_rst(i_rst), 
-        .instruction(instruction), 
-        .reg_write_data(reg_write_data),
-        .rd_addr(rd_addr),
-        .pc_plus4(pc_plus4),
-        .branch(branch), 
-        .mem_read(mem_read), 
-        .mem_write(mem_write), 
-        .reg_write(reg_write), 
-        .imm_alu(imm_alu), 
-        .check_lt_or_eq(check_lt_or_eq), 
-        .branch_expect_n(branch_expect_n), 
-        .jump(jump), 
-        .reg_jump(reg_jump), 
-        .is_word(is_word), 
-        .is_h_or_b(is_h_or_b), 
-        .is_unsigned_ld(is_unsigned_ld), 
-        .i_arith(i_arith), 
-        .i_unsigned(i_unsigned), 
-        .i_sub(i_sub),
-        .i_opsel(i_opsel),
-        .is_auipc(is_auipc),
-        .reg_write_en(reg_write_en),
-        .is_lui(is_lui),
-        .rs1_addr(rs1_addr),
-        .rs2_addr(rs2_addr),
-        .imm_out(imm),
-        .is_r(is_r),
-        .is_i(is_i),
-        .is_s(is_s),
-        .is_b(is_b),
-        .is_u(is_u),
-        .is_j(is_j),
-        .decode_trap(decode_trap),
-        .halt(o_retire_halt)
+        .instruction(instruction_id), 
+        .flush_decode(branch_taken),
+        .mem_rd_addr(rd_addr_mem),
+        .rd_addr(rd_addr_id),
+        .branch(branch_id), 
+        .ex_mem_read(mem_read_ex),
+        .ex_rd_addr(rd_addr_ex),
+        .mem_read(mem_read_id), 
+        .mem_write(mem_write_id), 
+        .reg_write_en(reg_write_en_id), 
+        .imm_alu(imm_alu_id), 
+        .check_lt_or_eq(check_lt_or_eq_id), 
+        .branch_expect_n(branch_expect_n_id), 
+        .jump(jump_id), 
+        .is_jalr(is_jalr_id), 
+        .is_word(is_word_id), 
+        .is_h_or_b(is_h_or_b_id), 
+        .is_unsigned_ld(is_unsigned_ld_id), 
+        .i_arith(i_arith_id), 
+        .i_unsigned(i_unsigned_id), 
+        .i_sub(i_sub_id),
+        .i_opsel(i_opsel_id),
+        .is_auipc(is_auipc_id),
+        .is_lui(is_lui_id),
+        .rs1_addr(rs1_addr_id),
+        .rs2_addr(rs2_addr_id),
+        .rs1_used(rs1_used_id),
+        .rs2_used(rs2_used_id),
+        .imm_out(imm_id),
+        .decode_trap(decode_trap_id),
+        .halt(halt_id),
+        .stall_pipeline(stall),
+        .prev_valid(prev_valid_if),
+        .valid(valid_id)
     );
 
     rf rf(
         .i_clk       (i_clk),
         .i_rst       (i_rst),
-        .i_rs1_raddr (rs1_addr),
-        .o_rs1_rdata (reg_out_1),
-        .i_rs2_raddr (rs2_addr),
-        .o_rs2_rdata (reg_out_2),
-        .i_rd_wen    (reg_write_en),
-        .i_rd_waddr  (rd_addr),
-        .i_rd_wdata  (reg_write_data)
-    ); 
+        .i_rs1_raddr (rs1_addr_id),
+        .o_rs1_rdata (reg_out_1_id),
+        .i_rs2_raddr (rs2_addr_id),
+        .o_rs2_rdata (reg_out_2_id),
+        .i_rd_wen    (reg_write_en_wb),
+        .i_rd_waddr  (rd_addr_wb),
+        .i_rd_wdata  (reg_write_data_wb)
+    );
 
-    assign o_retire_rs1_raddr = ~(is_u) ? rs1_addr : 5'd0;
-    assign o_retire_rs2_raddr = ~(is_i | is_u | is_j) ? rs2_addr : 5'd0;
-    assign o_retire_rd_waddr =  ~(is_s | is_b) ? rd_addr : 5'd0;
-    assign o_retire_rs1_rdata = ~(is_u) ? reg_out_1 : 32'd0;
-    assign o_retire_rs2_rdata = ~(is_i | is_u | is_j) ? reg_out_2 : 32'd0;
-    assign o_retire_rd_wdata = ~(is_s | is_b) ? reg_write_data : 32'd0;
+    id_ex_reg ID_EX_Reg(
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .i_stall(1'b0),
+        .i_flush(branch_taken),
+        .i_reg_out_1(reg_out_1_id),
+        .o_reg_out_1(reg_out_1_ex),
+        .i_reg_out_2(reg_out_2_id),
+        .o_reg_out_2(reg_out_2_ex),
+        .i_rs1_used(rs1_used_id),
+        .o_rs1_used(rs1_used_ex),
+        .i_rs2_used(rs2_used_id),
+        .o_rs2_used(rs2_used_ex),
+        .i_imm(imm_id),
+        .o_imm(imm_ex),
+        .i_pc(pc_id),
+        .o_pc(pc_ex),
+        .i_i_arith(i_arith_id),
+        .o_i_arith(i_arith_ex),
+        .i_i_unsigned(i_unsigned_id),
+        .o_i_unsigned(i_unsigned_ex),
+        .i_i_sub(i_sub_id),
+        .o_i_sub(i_sub_ex),
+        .i_i_opsel(i_opsel_id),
+        .o_i_opsel(i_opsel_ex),
+        .i_branch(branch_id),
+        .o_branch(branch_ex),
+        .i_jump(jump_id),
+        .o_jump(jump_ex),
+        .i_is_jalr(is_jalr_id),
+        .o_is_jalr(is_jalr_ex),
+        .i_check_lt_or_eq(check_lt_or_eq_id),
+        .o_check_lt_or_eq(check_lt_or_eq_ex),
+        .i_branch_expect_n(branch_expect_n_id),
+        .o_branch_expect_n(branch_expect_n_ex),
+        .i_mem_read(mem_read_id),
+        .o_mem_read(mem_read_ex),
+        .i_mem_write(mem_write_id),
+        .o_mem_write(mem_write_ex),
+        .i_is_word(is_word_id),
+        .o_is_word(is_word_ex),
+        .i_is_h_or_b(is_h_or_b_id),
+        .o_is_h_or_b(is_h_or_b_ex),
+        .i_is_unsigned_ld(is_unsigned_ld_id),
+        .o_is_unsigned_ld(is_unsigned_ld_ex),
+        .i_reg_write_en(reg_write_en_id),
+        .o_reg_write_en(reg_write_en_ex),
+        .i_rd_addr(rd_addr_id),
+        .o_rd_addr(rd_addr_ex),
+        .i_rs1_addr(rs1_addr_id),
+        .o_rs1_addr(rs1_addr_ex),
+        .i_rs2_addr(rs2_addr_id),
+        .o_rs2_addr(rs2_addr_ex),
+        .i_halt(halt_id),
+        .o_halt(halt_ex),
+        .i_valid(valid_id),
+        .o_valid(valid_ex),
+        .i_instruction(instruction_id),
+        .o_instruction(instruction_ex),
+        .i_is_auipc(is_auipc_id),
+        .o_is_auipc(is_auipc_ex),
+        .i_is_lui(is_lui_id),
+        .o_is_lui(is_lui_ex),
+        .i_imm_alu(imm_alu_id),
+        .o_imm_alu(imm_alu_ex),
+        .i_decode_trap(decode_trap_id),
+        .o_decode_trap(decode_trap_ex)
+    );
 
     execute Execute(
         .i_clk(i_clk),
         .i_rst(i_rst),
-        .reg_out_1(reg_out_1),
-        .reg_out_2(reg_out_2),
-        .imm(imm),
-        .imm_alu(imm_alu),
-        .pc(pc),
-        .pc_plus4(pc_plus4),
-        .i_arith(i_arith),
-        .i_unsigned(i_unsigned),
-        .i_sub(i_sub),
-        .i_opsel(i_opsel),
-        .branch(branch),
-        .jump(jump),
-        .reg_jump(reg_jump),
-        .check_lt_or_eq(check_lt_or_eq),
-        .branch_expect_n(branch_expect_n),
-        .alu_result(alu_result),
-        .next_pc(next_pc),
-        .pc_write_trap(pc_write_trap)
+        .reg_out_1(reg_out_1_ex),
+        .reg_out_2(reg_out_2_ex),
+        .imm(imm_ex),
+        .imm_alu(imm_alu_ex),
+        .pc(pc_ex),
+        .i_arith(i_arith_ex),
+        .i_unsigned(i_unsigned_ex),
+        .i_sub(i_sub_ex),
+        .i_opsel(i_opsel_ex),
+        .branch(branch_ex),
+        .jump(jump_ex),
+        .is_jalr(is_jalr_ex),
+        .is_lui(is_lui_ex),
+        .is_auipc(is_auipc_ex),
+        .check_lt_or_eq(check_lt_or_eq_ex),
+        .branch_expect_n(branch_expect_n_ex),
+        .ex_data_out(ex_data_out_ex),
+        .new_pc(new_pc_ex),
+        .pc_write_trap(pc_write_trap),
+        .o_branch_taken(branch_taken),
+        .ex_mem_reg_write_en(reg_write_en_mem),
+        .ex_mem_dest_addr(rd_addr_mem),
+        .ex_mem_data(ex_data_out_mem),
+        .mem_wb_reg_write_en(reg_write_en_wb),
+        .mem_wb_dest_addr(rd_addr_wb),
+        .mem_wb_data(mem_data_out_wb),
+        .rs1_addr(rs1_addr_ex),
+        .rs2_addr(rs2_addr_ex),
+        .rs1_used(rs1_used_ex),
+        .rs2_used(rs2_used_ex)
+    );
 
+    ex_mem_reg EX_MEM_Reg(
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .i_pc(pc_ex),
+        .o_pc(pc_mem),
+        .i_new_pc(new_pc_ex),
+        .o_new_pc(new_pc_mem),
+        .i_reg_out_1(reg_out_1_ex),
+        .o_reg_out_1(reg_out_1_mem),
+        .i_reg_out_2(reg_out_2_ex),
+        .o_reg_out_2(reg_out_2_mem),
+        .i_mem_read(mem_read_ex),
+        .o_mem_read(mem_read_mem),
+        .i_mem_write(mem_write_ex),
+        .o_mem_write(mem_write_mem),
+        .i_is_word(is_word_ex),
+        .o_is_word(is_word_mem),
+        .i_is_h_or_b(is_h_or_b_ex),
+        .o_is_h_or_b(is_h_or_b_mem),
+        .i_is_unsigned_ld(is_unsigned_ld_ex),
+        .o_is_unsigned_ld(is_unsigned_ld_mem),
+        .i_reg_write_en(reg_write_en_ex),
+        .o_reg_write_en(reg_write_en_mem),
+        .i_rs1_addr(rs1_addr_ex),
+        .o_rs1_addr(rs1_addr_mem),
+        .i_rs2_addr(rs2_addr_ex),
+        .o_rs2_addr(rs2_addr_mem),
+        .i_rs1_used(rs1_used_ex),
+        .o_rs1_used(rs1_used_mem),
+        .i_rs2_used(rs2_used_ex),
+        .o_rs2_used(rs2_used_mem),
+        .i_rd_addr(rd_addr_ex),
+        .o_rd_addr(rd_addr_mem),
+        .i_ex_data_out(ex_data_out_ex),
+        .o_ex_data_out(ex_data_out_mem),
+        .i_halt(halt_ex),
+        .o_halt(halt_mem),
+        .i_valid(valid_ex),
+        .o_valid(valid_mem),
+        .i_instruction(instruction_ex),
+        .o_instruction(instruction_mem)
     );
 
     memory Memory(
         .i_clk(i_clk),
         .i_rst(i_rst),
-        .w_data(reg_out_2),
-        .address(alu_result),
-        .mem_read(mem_read),
-        .mem_write(mem_write),
-        .is_word(is_word),
-        .is_h_or_b(is_h_or_b),
-        .is_unsigned_ld(is_unsigned_ld),
+        .w_data(reg_out_2_mem),
+        .address(ex_data_out_mem),
+        .mem_read(mem_read_mem),
+        .mem_write(mem_write_mem),
+        .is_word(is_word_mem),
+        .is_h_or_b(is_h_or_b_mem),
+        .is_unsigned_ld(is_unsigned_ld_mem),
         .i_dmem_rdata(i_dmem_rdata),
         .o_dmem_addr(o_dmem_addr),
         .o_dmem_ren(o_dmem_ren),
         .o_dmem_wen(o_dmem_wen),
         .o_dmem_wdata(o_dmem_wdata),
         .o_dmem_mask(o_dmem_mask),
-        .mem_data_out(mem_data_out),
+        .mem_data_out(mem_data_out_mem),
         .mem_trap(mem_trap)
+    );
+
+    mem_wb_reg MEM_WB_Reg(
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .i_pc(pc_mem),
+        .o_pc(pc_wb),
+        .i_new_pc(new_pc_mem),
+        .o_new_pc(new_pc_wb),
+        .i_mem_read(mem_read_mem),
+        .o_mem_read(mem_read_wb),
+        .i_mem_data_out(mem_data_out_mem),
+        .o_mem_data_out(mem_data_out_wb),
+        .i_ex_data_out(ex_data_out_mem),
+        .o_ex_data_out(ex_data_out_wb),
+        .i_reg_write_en(reg_write_en_mem),
+        .o_reg_write_en(reg_write_en_wb),
+        .i_rd_addr(rd_addr_mem),
+        .o_rd_addr(rd_addr_wb),
+        .i_reg_out_1(reg_out_1_mem),
+        .o_reg_out_1(reg_out_1_wb),
+        .i_reg_out_2(reg_out_2_mem),
+        .o_reg_out_2(reg_out_2_wb),
+        .i_rs1_addr(rs1_addr_mem),
+        .o_rs1_addr(rs1_addr_wb),
+        .i_rs2_addr(rs2_addr_mem),
+        .o_rs2_addr(rs2_addr_wb),
+        .i_rs1_used(rs1_used_mem),
+        .o_rs1_used(rs1_used_wb),
+        .i_rs2_used(rs2_used_mem),
+        .o_rs2_used(rs2_used_wb),
+        .i_halt(halt_mem),
+        .o_halt(halt_wb),
+        .i_valid(valid_mem),
+        .o_valid(valid_wb),
+        .i_instruction(instruction_mem),
+        .o_instruction(instruction_wb),
+        .i_dmem_addr(o_dmem_addr),
+        .i_dmem_mask(o_dmem_mask),
+        .i_dmem_ren(o_dmem_ren),
+        .i_dmem_wen(o_dmem_wen),
+        .i_dmem_wdata(o_dmem_wdata),
+        .i_dmem_rdata(i_dmem_rdata),
+        .o_dmem_addr(o_retire_dmem_addr),
+        .o_dmem_ren(o_retire_dmem_ren),
+        .o_dmem_wen(o_retire_dmem_wen),
+        .o_dmem_mask(o_retire_dmem_mask),
+        .o_dmem_wdata(o_retire_dmem_wdata),
+        .o_dmem_rdata(o_retire_dmem_rdata)
     );
 
     writeback Writeback(
         .i_clk(i_clk),
         .i_rst(i_rst),
-        .alu_result(alu_result),
-        .mem_data_out(mem_data_out),
-        .pc_plus4(pc_plus4),
-        .pc(pc),
-        .imm(imm),
-        .mem_read(mem_read),
-        .reg_write(reg_write),
-        .is_auipc(is_auipc),
-        .is_lui(is_lui),
-        .reg_write_data(reg_write_data),
-        .reg_write_en(reg_write_en),
-        .jump(jump)
+        .mem_read(mem_read_wb),
+        .ex_data_out(ex_data_out_wb),
+        .mem_data_out(mem_data_out_wb),
+        .reg_write_data(reg_write_data_wb)
     );
 
-    assign o_retire_valid = 1'b1;
-    assign o_retire_next_pc = next_pc;
-    assign o_retire_trap = pc_write_trap | mem_trap | decode_trap;
+    // TODO: Connect writeback outputs to retire outputs
+
+    assign o_retire_rs1_raddr = rs1_used_wb ? rs1_addr_wb : 5'd0;
+    assign o_retire_rs2_raddr = rs2_used_wb ? rs2_addr_wb : 5'd0;
+    assign o_retire_rd_waddr =  reg_write_en_wb ? rd_addr_wb : 5'd0;
+    assign o_retire_rs1_rdata = rs1_used_wb ? reg_out_1_wb : 32'd0;
+    assign o_retire_rs2_rdata = rs2_used_wb ? reg_out_2_wb : 32'd0;
+    assign o_retire_rd_wdata =  reg_write_en_wb ? reg_write_data_wb : 32'd0;
+
+    assign o_retire_inst = instruction_wb;
+    assign o_retire_pc = pc_wb;
+
+    assign o_retire_valid = valid_wb;
+    assign o_retire_next_pc = new_pc_wb;
+    assign o_retire_trap = pc_write_trap | mem_trap | decode_trap_ex;
+    assign o_retire_halt = halt_wb;
+
+    assign o_retire_dmem_rdata = mem_data_out_wb;
 
 endmodule
 
