@@ -176,13 +176,26 @@ module hart #(
     wire reg_write_en_id, reg_write_en_ex, reg_write_en_mem, reg_write_en_wb;
     wire [31:0] ex_data_out_ex, ex_data_out_mem, ex_data_out_wb;
     wire [31:0] mem_data_out_mem, mem_data_out_wb;
+    wire [31:0] rs1_fwd_data, rs2_fwd_data;
+
+    wire [31:0] instruction_in;
+    wire use_imem_rdata;
+
+    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) use_imem_rdata_dff (
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .d(1'b1),
+        .q(use_imem_rdata)
+    );
+
+    assign instruction_in = use_imem_rdata ? i_imem_rdata : 32'h00000013; // NOP
 
     // Connect fetch module
     fetch #(.RESET_ADDR(RESET_ADDR)) Fetch(
         .i_clk(i_clk), 
         .i_rst(i_rst), 
         .new_pc(new_pc_ex), 
-        .stall(1'b0),
+        .stall(stall),
         .branch_taken(branch_taken),
         .o_imem_raddr(o_imem_raddr), 
         .pc(pc_if),
@@ -192,7 +205,7 @@ module hart #(
     if_id_reg IF_ID_Reg(
         .i_clk(i_clk),
         .i_rst(i_rst),
-        .i_stall(1'b0),
+        .i_stall(stall),
         .i_flush(branch_taken),
         .i_pc(pc_if),
         .o_pc(pc_id),
@@ -203,7 +216,7 @@ module hart #(
     decode Decode(
         .i_clk(i_clk), 
         .i_rst(i_rst), 
-        .instruction(i_imem_rdata), 
+        .instruction(instruction_in), 
         .flush_decode(branch_taken),
         .mem_rd_addr(rd_addr_mem),
         .rd_addr(rd_addr_id),
@@ -239,7 +252,7 @@ module hart #(
         .valid(valid_id)
     );
 
-    rf rf(
+    rf #(.BYPASS_EN(1)) rf(
         .i_clk       (i_clk),
         .i_rst       (i_rst),
         .i_rs1_raddr (rs1_addr_id),
@@ -254,7 +267,7 @@ module hart #(
     id_ex_reg ID_EX_Reg(
         .i_clk(i_clk),
         .i_rst(i_rst),
-        .i_stall(1'b0),
+        .i_stall(stall),
         .i_flush(branch_taken),
         .i_reg_out_1(reg_out_1_id),
         .o_reg_out_1(reg_out_1_ex),
@@ -308,7 +321,7 @@ module hart #(
         .o_halt(halt_ex),
         .i_valid(valid_id),
         .o_valid(valid_ex),
-        .i_instruction(i_imem_rdata),
+        .i_instruction(instruction_in),
         .o_instruction(instruction_ex),
         .i_is_auipc(is_auipc_id),
         .o_is_auipc(is_auipc_ex),
@@ -346,11 +359,13 @@ module hart #(
         .ex_mem_data(ex_data_out_mem),
         .mem_wb_reg_write_en(reg_write_en_wb),
         .mem_wb_dest_addr(rd_addr_wb),
-        .mem_wb_data(mem_data_out_wb),
+        .mem_wb_data(reg_write_data_wb),
         .rs1_addr(rs1_addr_ex),
         .rs2_addr(rs2_addr_ex),
         .rs1_used(rs1_used_ex),
-        .rs2_used(rs2_used_ex)
+        .rs2_used(rs2_used_ex),
+        .o_rs1_fwd_data(rs1_fwd_data),
+        .o_rs2_fwd_data(rs2_fwd_data)
     );
 
     ex_mem_reg EX_MEM_Reg(
@@ -360,9 +375,9 @@ module hart #(
         .o_pc(pc_mem),
         .i_new_pc(new_pc_ex),
         .o_new_pc(new_pc_mem),
-        .i_reg_out_1(reg_out_1_ex),
+        .i_reg_out_1(rs1_fwd_data),
         .o_reg_out_1(reg_out_1_mem),
-        .i_reg_out_2(reg_out_2_ex),
+        .i_reg_out_2(rs2_fwd_data),
         .o_reg_out_2(reg_out_2_mem),
         .i_mem_read(mem_read_ex),
         .o_mem_read(mem_read_mem),

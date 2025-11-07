@@ -114,7 +114,7 @@ module id_ex_reg (
     
     // Reset signal: combine rst and flush (clear pipeline bubble on flush)
     wire rst_or_flush;
-    assign rst_or_flush = i_rst /*| i_flush*/;
+    assign rst_or_flush = i_rst | i_flush;
     
     // ====================================================================
     // Stall Multiplexers: When stalled, hold current output value

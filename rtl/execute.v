@@ -25,6 +25,7 @@ module execute (
     input [4:0] rs2_addr, // R2 number
     input [4:0] ex_mem_dest_addr, // RD value for EX/MEM
     input [4:0] mem_wb_dest_addr, // RD value for MEM/WB
+    output wire [31:0] o_rs1_fwd_data, o_rs2_fwd_data, // Forwarded data outputs for retire
     output wire pc_write_trap,
     output [31:0] new_pc, // New PC
     output [31:0] ex_data_out, // Result
@@ -40,6 +41,7 @@ module execute (
 
     wire [31:0] alu_op1, alu_op2;
     wire branch_taken;
+    wire rs1_ex_fwd, rs2_ex_fwd, rs1_mem_fwd, rs2_mem_fwd;
 
     assign branch_taken = branch ? 
 	    		{check_lt_or_eq ? (branch_expect_n ^ lt):
@@ -54,15 +56,23 @@ module execute (
 
     assign pc_write_trap = |new_pc[1:0];
 
+    assign rs1_ex_fwd = rs1_used && ex_mem_reg_write_en && |ex_mem_dest_addr && (ex_mem_dest_addr == rs1_addr);
+    assign rs2_ex_fwd = rs2_used && ex_mem_reg_write_en && |ex_mem_dest_addr && (ex_mem_dest_addr == rs2_addr);
+    assign rs1_mem_fwd = rs1_used && mem_wb_reg_write_en && |mem_wb_dest_addr && (mem_wb_dest_addr == rs1_addr);
+    assign rs2_mem_fwd = rs2_used && mem_wb_reg_write_en && |mem_wb_dest_addr && (mem_wb_dest_addr == rs2_addr);
+
     assign alu_op1 =
-        (rs1_used && ex_mem_reg_write_en && |ex_mem_dest_addr && (ex_mem_dest_addr == rs1_addr)) ? ex_mem_data : //EX hazard
-        (rs1_used && mem_wb_reg_write_en && |mem_wb_dest_addr && (mem_wb_dest_addr == rs1_addr)) ? mem_wb_data : //MEM hazard
+        (rs1_ex_fwd) ? ex_mem_data : //EX hazard
+        (rs1_mem_fwd) ? mem_wb_data : //MEM hazard
         reg_out_1;	//No hazard
 
     assign alu_op2 = imm_alu ? imm : // Immediate operation
-        (rs2_used && ex_mem_reg_write_en && |ex_mem_dest_addr && (ex_mem_dest_addr == rs2_addr)) ? ex_mem_data : //EX hazard
-        (rs2_used && mem_wb_reg_write_en && |mem_wb_dest_addr && (mem_wb_dest_addr == rs2_addr)) ? mem_wb_data : //MEM hazard
+        (rs2_ex_fwd) ? ex_mem_data : //EX hazard
+        (rs2_mem_fwd) ? mem_wb_data : //MEM hazard
         reg_out_2;	//No hazard
+
+    assign o_rs1_fwd_data = alu_op1;
+    assign o_rs2_fwd_data = alu_op2;
 
     //ALU Instantiation
     alu iALU1(.i_opsel(i_opsel), .i_sub(i_sub), .i_unsigned(i_unsigned), .i_arith(i_arith),
