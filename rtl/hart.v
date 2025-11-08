@@ -150,11 +150,12 @@ module hart #(
     wire [31:0] reg_out_2_id, reg_out_2_ex, reg_out_2_mem, reg_out_2_wb;
     wire [31:0] imm_id, imm_ex;
     wire branch_taken;
-    wire stall;
+    wire stall, prev_stall;
     wire valid_if, valid_id, valid_ex, valid_mem, valid_wb;
     wire prev_valid_if;
     wire [31:0] reg_write_data_wb;
     wire pc_write_trap, mem_trap, decode_trap;
+    wire trap_ex, trap_mem, trap_wb;
     wire branch_id, branch_ex;
     wire jump_id, jump_ex;
     wire is_jalr_id, is_jalr_ex;
@@ -170,25 +171,41 @@ module hart #(
     wire imm_alu_id, imm_alu_ex;
     wire mem_read_id, mem_read_ex, mem_read_mem, mem_read_wb;
     wire mem_write_id, mem_write_ex, mem_write_mem;
-    wire is_word_id, is_word_ex, is_word_mem;
-    wire is_h_or_b_id, is_h_or_b_ex, is_h_or_b_mem;
-    wire is_unsigned_ld_id, is_unsigned_ld_ex, is_unsigned_ld_mem;
+    wire is_word_id, is_word_ex, is_word_mem, is_word_wb;
+    wire is_h_or_b_id, is_h_or_b_ex, is_h_or_b_mem, is_h_or_b_wb;
+    wire is_unsigned_ld_id, is_unsigned_ld_ex, is_unsigned_ld_mem, is_unsigned_ld_wb;
     wire reg_write_en_id, reg_write_en_ex, reg_write_en_mem, reg_write_en_wb;
     wire [31:0] ex_data_out_ex, ex_data_out_mem, ex_data_out_wb;
-    wire [31:0] mem_data_out_mem, mem_data_out_wb;
+    wire [31:0] mem_data_out_wb;
     wire [31:0] rs1_fwd_data, rs2_fwd_data;
 
-    wire [31:0] instruction_in;
+    wire [31:0] instruction_in, prev_instruction;
     wire use_imem_rdata;
+
+    localparam NOP = 32'h00000013; // NOP instruction (addi x0, x0, 0)
 
     d_ff #(.WIDTH(1), .RST_VAL(1'b0)) use_imem_rdata_dff (
         .i_clk(i_clk),
-        .i_rst(i_rst),
+        .i_rst(i_rst | branch_taken),
         .d(1'b1),
         .q(use_imem_rdata)
     );
 
-    assign instruction_in = use_imem_rdata ? i_imem_rdata : 32'h00000013; // NOP
+    d_ff prev_stall_dff (
+        .i_clk(i_clk),
+        .i_rst(i_rst | branch_taken),
+        .d(stall),
+        .q(prev_stall)
+    );
+
+    d_ff #(.WIDTH(32), .RST_VAL(NOP)) prev_instruction_dff (
+        .i_clk(i_clk),
+        .i_rst(i_rst | branch_taken),
+        .d(instruction_in),
+        .q(prev_instruction)
+    );
+
+    assign instruction_in =  prev_stall ? prev_instruction : (use_imem_rdata ? i_imem_rdata : NOP); // NOP
 
     // Connect fetch module
     fetch #(.RESET_ADDR(RESET_ADDR)) Fetch(
@@ -328,7 +345,9 @@ module hart #(
         .i_is_lui(is_lui_id),
         .o_is_lui(is_lui_ex),
         .i_imm_alu(imm_alu_id),
-        .o_imm_alu(imm_alu_ex)
+        .o_imm_alu(imm_alu_ex),
+        .i_trap(decode_trap),
+        .o_trap(trap_ex)
     );
 
     execute Execute(
@@ -408,7 +427,9 @@ module hart #(
         .i_valid(valid_ex),
         .o_valid(valid_mem),
         .i_instruction(instruction_ex),
-        .o_instruction(instruction_mem)
+        .o_instruction(instruction_mem),
+        .i_trap(trap_ex | pc_write_trap),
+        .o_trap(trap_mem)
     );
 
     memory Memory(
@@ -427,7 +448,6 @@ module hart #(
         .o_dmem_wen(o_dmem_wen),
         .o_dmem_wdata(o_dmem_wdata),
         .o_dmem_mask(o_dmem_mask),
-        .mem_data_out(mem_data_out_mem),
         .mem_trap(mem_trap)
     );
 
@@ -440,8 +460,6 @@ module hart #(
         .o_new_pc(new_pc_wb),
         .i_mem_read(mem_read_mem),
         .o_mem_read(mem_read_wb),
-        .i_mem_data_out(mem_data_out_mem),
-        .o_mem_data_out(mem_data_out_wb),
         .i_ex_data_out(ex_data_out_mem),
         .o_ex_data_out(ex_data_out_wb),
         .i_reg_write_en(reg_write_en_mem),
@@ -475,7 +493,15 @@ module hart #(
         .o_dmem_ren(o_retire_dmem_ren),
         .o_dmem_wen(o_retire_dmem_wen),
         .o_dmem_mask(o_retire_dmem_mask),
-        .o_dmem_wdata(o_retire_dmem_wdata)
+        .o_dmem_wdata(o_retire_dmem_wdata),
+        .i_is_word(is_word_mem),
+        .o_is_word(is_word_wb),
+        .i_is_h_or_b(is_h_or_b_mem),
+        .o_is_h_or_b(is_h_or_b_wb),
+        .i_is_unsigned_ld(is_unsigned_ld_mem),
+        .o_is_unsigned_ld(is_unsigned_ld_wb),
+        .i_trap(trap_mem | mem_trap),
+        .o_trap(trap_wb)
     );
 
     writeback Writeback(
@@ -483,8 +509,12 @@ module hart #(
         .i_rst(i_rst),
         .mem_read(mem_read_wb),
         .ex_data_out(ex_data_out_wb),
-        .mem_data_out(mem_data_out_wb),
-        .reg_write_data(reg_write_data_wb)
+        .i_dmem_rdata(i_dmem_rdata),
+        .is_word(is_word_wb),
+        .is_h_or_b(is_h_or_b_wb),
+        .is_unsigned_ld(is_unsigned_ld_wb),
+        .reg_write_data(reg_write_data_wb),
+        .mem_data_out(mem_data_out_wb)
     );
 
     // TODO: Connect writeback outputs to retire outputs
@@ -501,10 +531,10 @@ module hart #(
 
     assign o_retire_valid = valid_wb;
     assign o_retire_next_pc = new_pc_wb;
-    assign o_retire_trap = pc_write_trap | mem_trap | decode_trap;
+    assign o_retire_trap = trap_wb;
     assign o_retire_halt = halt_wb;
 
-    assign o_retire_dmem_rdata = mem_data_out_wb;
+    assign o_retire_dmem_rdata = i_dmem_rdata;
 
 endmodule
 

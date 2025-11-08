@@ -35,8 +35,8 @@ module decode(
 
     wire is_r, is_i, is_s, is_b, is_u, is_j;
 
-    assign rs1_used = ~(is_u & is_j);  // rs1 not used by U and J types
-    assign rs2_used = ~(is_i | is_u | is_j);  // rs2 not used by I, U, J types
+    assign rs1_used = ~(is_u | is_j | halt);  // rs1 not used by U and J types
+    assign rs2_used = ~(is_i | is_u | is_j | halt);  // rs2 not used by I, U, J types
 
     wire load_use_rs1 = ex_mem_read && (ex_rd_addr != 5'd0) && (ex_rd_addr == rs1_addr) && rs1_used;
     wire load_use_rs2 = ex_mem_read && (ex_rd_addr != 5'd0) && (ex_rd_addr == rs2_addr) && rs2_used;
@@ -45,7 +45,7 @@ module decode(
     // With forwarding, other RAW hazards don't require stalling
     assign stall_pipeline = load_use_rs1 | load_use_rs2;
 
-    assign valid = prev_valid & ~stall_pipeline /*& ~flush_decode*/;
+    assign valid = prev_valid /*& ~flush_decode*/;
     
     // Flush implementation:
     // - flush_decode input (line 7) will be connected to execute.o_flush_pipeline in hart.v

@@ -47,7 +47,7 @@ module id_ex_reg (
     input  wire        i_branch_expect_n,  // Branch prediction (not taken)
     
     // Exception/Control flow
-    input  wire        i_decode_trap, // Decode trap flag
+    input  wire        i_trap, // Decode trap flag
     input  wire        i_halt,        // Halt instruction
     input  wire        i_valid,
 
@@ -88,10 +88,12 @@ module id_ex_reg (
     output wire        o_branch_expect_n,
     
     // Exception/Control flow outputs
-    output wire        o_decode_trap,
+    output wire        o_trap,
     output wire        o_halt,
     output wire        o_valid
 );
+
+    localparam [31:0] NOP = 32'h00000013; // NOP instruction (addi x0, x0, 0)
 
     // Internal wires for mux outputs (D inputs to flip-flops)
     // Data path
@@ -110,7 +112,7 @@ module id_ex_reg (
     wire        d_branch, d_jump, d_is_jalr, d_check_lt_or_eq, d_branch_expect_n;
     
     // Exception/Control
-    wire        d_decode_trap, d_halt;
+    wire        d_trap, d_halt;
     
     // Reset signal: combine rst and flush (clear pipeline bubble on flush)
     wire rst_or_flush;
@@ -121,23 +123,23 @@ module id_ex_reg (
     // ====================================================================
     
     // Data path signals
-    assign d_pc          = i_stall ? o_pc          : i_pc;
-    assign d_reg_out_1   = i_stall ? o_reg_out_1   : i_reg_out_1;
-    assign d_reg_out_2   = i_stall ? o_reg_out_2   : i_reg_out_2;
-    assign d_imm         = i_stall ? o_imm         : i_imm;
-    assign d_rs1_addr    = i_stall ? o_rs1_addr    : i_rs1_addr;
-    assign d_rs2_addr    = i_stall ? o_rs2_addr    : i_rs2_addr;
-    assign d_rd_addr     = i_stall ? o_rd_addr     : i_rd_addr;
+    assign d_pc          = i_stall ? o_pc         : i_pc;
+    assign d_reg_out_1   = i_stall ? o_reg_out_1  : i_reg_out_1;
+    assign d_reg_out_2   = i_stall ? o_reg_out_2  : i_reg_out_2;
+    assign d_imm         = i_stall ? o_imm        : i_imm;
+    assign d_rs1_addr    = i_stall ? 5'h0         : i_rs1_addr;
+    assign d_rs2_addr    = i_stall ? 5'h0         : i_rs2_addr;
+    assign d_rd_addr     = i_stall ? 1'b0         : i_rd_addr;
     
     // Memory control signals
-    assign d_mem_read       = i_stall ? o_mem_read       : i_mem_read;
-    assign d_mem_write      = i_stall ? o_mem_write      : i_mem_write;
+    assign d_mem_read       = i_stall ? 1'b0      : i_mem_read;
+    assign d_mem_write      = i_stall ? 1'b0      : i_mem_write;
     assign d_is_word        = i_stall ? o_is_word        : i_is_word;
     assign d_is_h_or_b      = i_stall ? o_is_h_or_b      : i_is_h_or_b;
     assign d_is_unsigned_ld = i_stall ? o_is_unsigned_ld : i_is_unsigned_ld;
     
     // ALU control signals
-    assign d_reg_write  = i_stall ? o_reg_write_en  : i_reg_write_en;
+    assign d_reg_write  = i_stall ? 1'b0  : i_reg_write_en;
     assign d_imm_alu    = i_stall ? o_imm_alu    : i_imm_alu;
     assign d_i_arith    = i_stall ? o_i_arith    : i_i_arith;
     assign d_i_unsigned = i_stall ? o_i_unsigned : i_i_unsigned;
@@ -154,7 +156,7 @@ module id_ex_reg (
     assign d_branch_expect_n = i_stall ? o_branch_expect_n : i_branch_expect_n;
     
     // Exception/Control signals
-    assign d_decode_trap = i_stall ? o_decode_trap : i_decode_trap;
+    assign d_trap = i_stall ? o_trap : i_trap;
     assign d_halt        = i_stall ? o_halt        : i_halt;
     
     // ====================================================================
@@ -166,7 +168,7 @@ module id_ex_reg (
     d_ff #(.WIDTH(32), .RST_VAL(32'h00000000)) ff_reg_out_1 (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_reg_out_1), .q(o_reg_out_1));
     d_ff #(.WIDTH(32), .RST_VAL(32'h00000000)) ff_reg_out_2 (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_reg_out_2), .q(o_reg_out_2));
     d_ff #(.WIDTH(32), .RST_VAL(32'h00000000)) ff_imm       (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_imm),       .q(o_imm));
-    d_ff #(.WIDTH(32), .RST_VAL(32'h00000013)) ff_instruction (.i_clk(i_clk), .i_rst(rst_or_flush), .d(i_stall ? o_instruction : i_instruction), .q(o_instruction));
+    d_ff #(.WIDTH(32), .RST_VAL(32'h00000013)) ff_instruction (.i_clk(i_clk), .i_rst(rst_or_flush), .d(i_stall ? NOP : i_instruction), .q(o_instruction));
 
     // Address flip-flops (5-bit) - for forwarding unit
     d_ff #(.WIDTH(5), .RST_VAL(5'h00)) ff_rs1_addr (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_rs1_addr), .q(o_rs1_addr));
@@ -203,7 +205,7 @@ module id_ex_reg (
     d_ff rs2_used_dff(.i_rst(rst_or_flush), .i_clk(i_clk), .d(i_rs2_used), .q(o_rs2_used));
     
     // Exception/Control flip-flops
-    d_ff ff_decode_trap (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_decode_trap), .q(o_decode_trap));
+    d_ff ff_trap (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_trap), .q(o_trap));
     d_ff ff_halt        (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_halt),        .q(o_halt));
     d_ff ff_valid       (.i_clk(i_clk), .i_rst(rst_or_flush), .d(i_stall ? 1'b0 : i_valid), .q(o_valid));
 
