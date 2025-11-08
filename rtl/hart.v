@@ -138,7 +138,7 @@ module hart #(
 `endif
 );
     // Internal wires and registers.
-    wire [31:0] instruction_id, instruction_ex, instruction_mem, instruction_wb;
+    wire [31:0] instruction_ex, instruction_mem, instruction_wb;
     wire [31:0] pc_if, pc_id, pc_ex, pc_mem, pc_wb;
     wire [31:0] new_pc_ex, new_pc_mem, new_pc_wb;
     wire rs1_used_id, rs1_used_ex, rs1_used_mem, rs1_used_wb;
@@ -151,7 +151,6 @@ module hart #(
     wire [31:0] imm_id, imm_ex;
     wire branch_taken;
     wire stall;
-    
     wire valid_if, valid_id, valid_ex, valid_mem, valid_wb;
     wire prev_valid_if;
     wire [31:0] reg_write_data_wb;
@@ -168,7 +167,6 @@ module hart #(
     wire is_auipc_id, is_auipc_ex;
     wire is_lui_id, is_lui_ex;
     wire halt_id, halt_ex, halt_mem, halt_wb;
-    wire decode_trap_id, decode_trap_ex;
     wire imm_alu_id, imm_alu_ex;
     wire mem_read_id, mem_read_ex, mem_read_mem, mem_read_wb;
     wire mem_write_id, mem_write_ex, mem_write_mem;
@@ -178,20 +176,26 @@ module hart #(
     wire reg_write_en_id, reg_write_en_ex, reg_write_en_mem, reg_write_en_wb;
     wire [31:0] ex_data_out_ex, ex_data_out_mem, ex_data_out_wb;
     wire [31:0] mem_data_out_mem, mem_data_out_wb;
+    wire [31:0] rs1_fwd_data, rs2_fwd_data;
 
-    // For now, disable stalling (can be enhanced later for hazard detection)
-    assign stall = 1'b0;
-    
-    // Initialize trap signals (can be enhanced later with proper trap detection)
-    assign pc_write_trap = 1'b0;  // No PC alignment traps for now
-    assign mem_trap = 1'b0;       // No memory alignment traps for now
+    wire [31:0] instruction_in;
+    wire use_imem_rdata;
+
+    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) use_imem_rdata_dff (
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .d(1'b1),
+        .q(use_imem_rdata)
+    );
+
+    assign instruction_in = use_imem_rdata ? i_imem_rdata : 32'h00000013; // NOP
 
     // Connect fetch module
     fetch #(.RESET_ADDR(RESET_ADDR)) Fetch(
         .i_clk(i_clk), 
         .i_rst(i_rst), 
         .new_pc(new_pc_ex), 
-        .stall(1'b0),
+        .stall(stall),
         .branch_taken(branch_taken),
         .o_imem_raddr(o_imem_raddr), 
         .pc(pc_if),
@@ -201,20 +205,20 @@ module hart #(
     if_id_reg IF_ID_Reg(
         .i_clk(i_clk),
         .i_rst(i_rst),
-        .i_stall(1'b0),
+        .i_stall(stall),
         .i_flush(branch_taken),
-        .i_instruction(i_imem_rdata),
-        .o_instruction(instruction_id),
         .i_pc(pc_if),
         .o_pc(pc_id),
         .i_valid(valid_if),
-        .o_valid(prev_valid_if)
+        .o_valid(prev_valid_if),
+        .i_instruction(instruction_in),
+        .o_instruction(/* not used, instruction passed directly */)
     );
 
     decode Decode(
         .i_clk(i_clk), 
         .i_rst(i_rst), 
-        .instruction(instruction_id), 
+        .instruction(instruction_in), 
         .flush_decode(branch_taken),
         .mem_rd_addr(rd_addr_mem),
         .rd_addr(rd_addr_id),
@@ -243,14 +247,14 @@ module hart #(
         .rs1_used(rs1_used_id),
         .rs2_used(rs2_used_id),
         .imm_out(imm_id),
-        .decode_trap(decode_trap_id),
+        .decode_trap(decode_trap),
         .halt(halt_id),
         .stall_pipeline(stall),
         .prev_valid(prev_valid_if),
         .valid(valid_id)
     );
 
-    rf rf(
+    rf #(.BYPASS_EN(1)) rf(
         .i_clk       (i_clk),
         .i_rst       (i_rst),
         .i_rs1_raddr (rs1_addr_id),
@@ -265,7 +269,7 @@ module hart #(
     id_ex_reg ID_EX_Reg(
         .i_clk(i_clk),
         .i_rst(i_rst),
-        .i_stall(1'b0),
+        .i_stall(stall),
         .i_flush(branch_taken),
         .i_reg_out_1(reg_out_1_id),
         .o_reg_out_1(reg_out_1_ex),
@@ -319,7 +323,7 @@ module hart #(
         .o_halt(halt_ex),
         .i_valid(valid_id),
         .o_valid(valid_ex),
-        .i_instruction(instruction_id),
+        .i_instruction(instruction_in),
         .o_instruction(instruction_ex),
         .i_is_auipc(is_auipc_id),
         .o_is_auipc(is_auipc_ex),
@@ -327,8 +331,8 @@ module hart #(
         .o_is_lui(is_lui_ex),
         .i_imm_alu(imm_alu_id),
         .o_imm_alu(imm_alu_ex),
-        .i_decode_trap(decode_trap_id),
-        .o_decode_trap(decode_trap_ex)
+        .i_decode_trap(decode_trap),
+        .o_decode_trap(/* not used, passed as wire */)
     );
 
     execute Execute(
@@ -359,11 +363,13 @@ module hart #(
         .ex_mem_data(ex_data_out_mem),
         .mem_wb_reg_write_en(reg_write_en_wb),
         .mem_wb_dest_addr(rd_addr_wb),
-        .mem_wb_data(mem_data_out_wb),
+        .mem_wb_data(reg_write_data_wb),
         .rs1_addr(rs1_addr_ex),
         .rs2_addr(rs2_addr_ex),
         .rs1_used(rs1_used_ex),
-        .rs2_used(rs2_used_ex)
+        .rs2_used(rs2_used_ex),
+        .o_rs1_fwd_data(rs1_fwd_data),
+        .o_rs2_fwd_data(rs2_fwd_data)
     );
 
     ex_mem_reg EX_MEM_Reg(
@@ -373,9 +379,9 @@ module hart #(
         .o_pc(pc_mem),
         .i_new_pc(new_pc_ex),
         .o_new_pc(new_pc_mem),
-        .i_reg_out_1(reg_out_1_ex),
+        .i_reg_out_1(rs1_fwd_data),
         .o_reg_out_1(reg_out_1_mem),
-        .i_reg_out_2(reg_out_2_ex),
+        .i_reg_out_2(rs2_fwd_data),
         .o_reg_out_2(reg_out_2_mem),
         .i_mem_read(mem_read_ex),
         .o_mem_read(mem_read_mem),
@@ -469,12 +475,12 @@ module hart #(
         .i_dmem_ren(o_dmem_ren),
         .i_dmem_wen(o_dmem_wen),
         .i_dmem_wdata(o_dmem_wdata),
-        .i_dmem_rdata(i_dmem_rdata),
         .o_dmem_addr(o_retire_dmem_addr),
         .o_dmem_ren(o_retire_dmem_ren),
         .o_dmem_wen(o_retire_dmem_wen),
         .o_dmem_mask(o_retire_dmem_mask),
         .o_dmem_wdata(o_retire_dmem_wdata),
+        .i_dmem_rdata(i_dmem_rdata),
         .o_dmem_rdata(o_retire_dmem_rdata)
     );
 
@@ -486,6 +492,14 @@ module hart #(
         .mem_data_out(mem_data_out_wb),
         .reg_write_data(reg_write_data_wb)
     );
+
+    // Trap signal assignments (no traps implemented yet)
+    assign pc_write_trap = 1'b0;
+    // mem_trap is driven by Memory module
+    assign decode_trap = 1'b0;
+    
+    // Stall signal assignment (no hazard detection implemented yet)
+    assign stall = 1'b0;
 
     // TODO: Connect writeback outputs to retire outputs
 
@@ -501,7 +515,7 @@ module hart #(
 
     assign o_retire_valid = valid_wb;
     assign o_retire_next_pc = new_pc_wb;
-    assign o_retire_trap = pc_write_trap | mem_trap | decode_trap_ex;
+    assign o_retire_trap = pc_write_trap | mem_trap | decode_trap;
     assign o_retire_halt = halt_wb;
 
     assign o_retire_dmem_rdata = mem_data_out_wb;
