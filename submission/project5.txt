@@ -1,0 +1,15 @@
+[Group Member 1]: David Eapen
+[Group Member 2]: Blake Weichbrodt
+[Group Member 3]: Thrishaank Reddy Kumbam
+[Group Member 4]: Matthew Rickel
+
+Contributions:
+David - Integrated compoments and got tests passing
+Blake - Initial planning, schematic layout, modified memory and writeback for pipelining, finished schematic, helped debug
+Thrishaank - Instiated flip-flops for pipeline and created hazard detection, stall, and flush logic
+Matthew - Created forwarding logic, commented code, and improved signal naming
+
+We are all content with the contributions made by each group member.
+
+We certify that our usage of LLMs is consistent with UW-Madison's academic integrity policies.
+

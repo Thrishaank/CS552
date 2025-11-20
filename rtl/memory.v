@@ -7,7 +7,6 @@ module memory(
     output [31:0] o_dmem_wdata,
     output [3:0] o_dmem_mask,
     output o_dmem_ren, o_dmem_wen,
-    output [31:0] mem_data_out,
     output mem_trap
 );
 
@@ -30,33 +29,6 @@ assign o_dmem_mask = is_word
                 : address[1:0] == 2'b10
                     ? 4'b0100
                     : 4'b1000;
-
-// Assign mem_data_out based on load type and address alignment
-assign mem_data_out = is_word
-    ? i_dmem_rdata // If word
-    : is_h_or_b
-        ? address[1] // If half-word
-            ? is_unsigned_ld
-                ? {16'b0, i_dmem_rdata[31:16]} // Unsigned half-word upper
-                : {{16{i_dmem_rdata[31]}}, i_dmem_rdata[31:16]} // Signed half-word upper
-            : is_unsigned_ld
-                ? {16'b0, i_dmem_rdata[15:0]} // Unsigned half-word lower
-                : {{16{i_dmem_rdata[15]}}, i_dmem_rdata[15:0]} // Signed half-word lower
-        : address[1:0] == 2'b00 // If byte
-            ? is_unsigned_ld
-                ? {24'b0, i_dmem_rdata[7:0]} // Unsigned byte 1st
-                : {{24{i_dmem_rdata[7]}}, i_dmem_rdata[7:0]} // Signed byte 1st
-            : address[1:0] == 2'b01
-                ? is_unsigned_ld
-                    ? {24'b0, i_dmem_rdata[15:8]} // Unsigned byte 2nd
-                    : {{24{i_dmem_rdata[15]}}, i_dmem_rdata[15:8]} // Signed byte 2nd
-                : address[1:0] == 2'b10
-                    ? is_unsigned_ld
-                        ? {24'b0, i_dmem_rdata[23:16]} // Unsigned byte 3rd
-                        : {{24{i_dmem_rdata[23]}}, i_dmem_rdata[23:16]} // Signed byte 3rd
-                    : is_unsigned_ld
-                        ? {24'b0, i_dmem_rdata[31:24]} // Unsigned byte 4th
-                        : {{24{i_dmem_rdata[31]}}, i_dmem_rdata[31:24]}; // Signed byte 4th
 
 // Assign mem_data_out based on load type and address alignment
 assign o_dmem_wdata = is_word

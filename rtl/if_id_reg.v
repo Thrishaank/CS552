@@ -9,12 +9,12 @@ module if_id_reg (
     input  wire        i_flush,       // Flush signal to clear pipeline register
     
     // Inputs from IF stage
-    input  wire [31:0] i_instruction, // Instruction from fetch
     input  wire [31:0] i_pc,          // Program counter from fetch
     input wire i_valid,
     
     // Outputs to ID stage
     output wire [31:0] o_instruction, // Instruction to decode
+
     output wire [31:0] o_pc,           // Program counter to decode
     output wire o_valid
 );
@@ -28,19 +28,11 @@ module if_id_reg (
     
     // Multiplexers for stall logic
     // When stalled, hold current values; otherwise, accept new values from fetch
-    wire [31:0] d_instruction, d_pc;
-    assign d_instruction = i_stall ? o_instruction : i_instruction;
+    wire [31:0] d_pc;
     assign d_pc          = i_stall ? o_pc          : i_pc;
     
     // Instantiate D flip-flops for each signal
     // On reset or flush, instruction becomes NOP, PC becomes 0
-    d_ff #(.WIDTH(32), .RST_VAL(NOP)) ff_instruction (
-        .i_clk(i_clk),
-        .i_rst(rst_or_flush),
-        .d(d_instruction),
-        .q(o_instruction)
-    );
-    
     d_ff #(.WIDTH(32), .RST_VAL(32'h00000000)) ff_pc (
         .i_clk(i_clk),
         .i_rst(rst_or_flush),
@@ -52,6 +44,7 @@ module if_id_reg (
         .i_clk(i_clk),
         .i_rst(rst_or_flush),
         .d(i_stall ? 1'b0 : i_valid),
+        .d(i_stall ? o_valid : i_valid),
         .q(o_valid)
     );
 

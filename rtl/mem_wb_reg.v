@@ -5,6 +5,7 @@ module mem_wb_reg(
     input i_mem_read, i_reg_write_en,
     input wire [31:0] i_reg_out_1, i_reg_out_2,
     input [31:0] i_mem_data_out, i_ex_data_out,
+    input [31:0] i_ex_data_out,
     input [4:0] i_rs1_addr, i_rs2_addr, i_rd_addr,
     input wire i_halt, i_valid,
     input wire i_rs1_used, i_rs2_used,
@@ -13,12 +14,16 @@ module mem_wb_reg(
     input wire i_dmem_ren, i_dmem_wen,
     input wire [3:0] i_dmem_mask,
     input wire [31:0] i_dmem_wdata, i_dmem_rdata,
+    input wire [31:0] i_dmem_wdata,
+    input wire i_is_word, i_is_h_or_b, i_is_unsigned_ld,
+    input wire i_trap,
 
     // Outputs
     output wire [31:0] o_pc, o_new_pc,
     output wire o_mem_read, o_reg_write_en,
     output wire [31:0] o_reg_out_1, o_reg_out_2,
     output wire [31:0] o_mem_data_out, o_ex_data_out,
+    output wire [31:0] o_ex_data_out,
     output wire [4:0] o_rs1_addr, o_rs2_addr, o_rd_addr,
     output wire o_halt, o_valid,
     output wire o_rs1_used, o_rs2_used,
@@ -27,6 +32,9 @@ module mem_wb_reg(
     output wire o_dmem_ren, o_dmem_wen,
     output wire [3:0] o_dmem_mask,
     output wire [31:0] o_dmem_wdata, o_dmem_rdata
+    output wire [31:0] o_dmem_wdata,
+    output wire o_is_word, o_is_h_or_b, o_is_unsigned_ld,
+    output wire o_trap
 );
 
     d_ff #(.WIDTH(32)) pc_ff (
@@ -160,6 +168,32 @@ module mem_wb_reg(
         .i_rst(i_rst),
         .d(i_dmem_wen),
         .q(o_dmem_wen)
+    );
+
+    d_ff is_word_ff (
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .d(i_is_word),
+        .q(o_is_word)
+    );
+    d_ff is_h_or_b_ff (
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .d(i_is_h_or_b),
+        .q(o_is_h_or_b)
+    );
+    d_ff is_unsigned_ld_ff (
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .d(i_is_unsigned_ld),
+        .q(o_is_unsigned_ld)
+    );
+
+    d_ff trap_ff (
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .d(i_trap),
+        .q(o_trap)
     );
 
     d_ff #(.WIDTH(4)) dmem_mask_ff (
