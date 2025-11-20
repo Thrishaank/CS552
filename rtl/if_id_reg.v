@@ -11,10 +11,12 @@ module if_id_reg (
     // Inputs from IF stage
     input  wire [31:0] i_instruction, // Instruction from fetch
     input  wire [31:0] i_pc,          // Program counter from fetch
+    input wire i_valid,
     
     // Outputs to ID stage
     output wire [31:0] o_instruction, // Instruction to decode
-    output wire [31:0] o_pc           // Program counter to decode
+    output wire [31:0] o_pc,           // Program counter to decode
+    output wire o_valid
 );
 
     // NOP instruction (addi x0, x0, 0) = 32'h00000013
@@ -44,6 +46,13 @@ module if_id_reg (
         .i_rst(rst_or_flush),
         .d(d_pc),
         .q(o_pc)
+    );
+
+    d_ff ff_valid (
+        .i_clk(i_clk),
+        .i_rst(rst_or_flush),
+        .d(i_stall ? 1'b0 : i_valid),
+        .q(o_valid)
     );
 
 endmodule

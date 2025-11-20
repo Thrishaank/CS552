@@ -1,0 +1,106 @@
+D:/CS552/rtl/d_ff.v {1 {vlog -work work -stats=none D:/CS552/rtl/d_ff.v
+Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
+-- Compiling module d_ff
+
+Top level modules:
+	d_ff
+
+} {} {}} D:/CS552/rtl/hart.v {1 {vlog -work work -stats=none D:/CS552/rtl/hart.v
+Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
+-- Compiling module hart
+
+Top level modules:
+	hart
+
+} {} {}} D:/CS552/rtl/ex_mem_reg.v {1 {vlog -work work -stats=none D:/CS552/rtl/ex_mem_reg.v
+Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
+-- Compiling module ex_mem_reg
+
+Top level modules:
+	ex_mem_reg
+
+} {} {}} D:/CS552/rtl/fetch.v {1 {vlog -work work -stats=none D:/CS552/rtl/fetch.v
+Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
+-- Compiling module fetch
+
+Top level modules:
+	fetch
+
+} {} {}} D:/CS552/rtl/execute.v {1 {vlog -work work -stats=none D:/CS552/rtl/execute.v
+Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
+-- Compiling module execute
+
+Top level modules:
+	execute
+
+} {} {}} D:/CS552/rtl/imm.v {1 {vlog -work work -stats=none D:/CS552/rtl/imm.v
+Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
+-- Compiling module imm
+
+Top level modules:
+	imm
+
+} {} {}} D:/CS552/rtl/id_ex_reg.v {1 {vlog -work work -stats=none D:/CS552/rtl/id_ex_reg.v
+Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
+-- Compiling module id_ex_reg
+
+Top level modules:
+	id_ex_reg
+
+} {} {}} D:/CS552/rtl/rf.v {1 {vlog -work work -stats=none D:/CS552/rtl/rf.v
+Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
+-- Compiling module rf
+
+Top level modules:
+	rf
+
+} {} {}} D:/CS552/rtl/if_id_reg.v {1 {vlog -work work -stats=none D:/CS552/rtl/if_id_reg.v
+Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
+-- Compiling module if_id_reg
+
+Top level modules:
+	if_id_reg
+
+} {} {}} D:/CS552/rtl/memory.v {1 {vlog -work work -stats=none D:/CS552/rtl/memory.v
+Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
+-- Compiling module memory
+
+Top level modules:
+	memory
+
+} {} {}} D:/CS552/tb/tb.v {1 {vlog -work work -stats=none D:/CS552/tb/tb.v
+Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
+-- Compiling module hart_tb
+
+Top level modules:
+	hart_tb
+
+} {} {}} D:/CS552/rtl/alu.v {1 {vlog -work work -stats=none D:/CS552/rtl/alu.v
+Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
+-- Compiling module alu
+
+Top level modules:
+	alu
+
+} {} {}} D:/CS552/rtl/writeback.v {1 {vlog -work work -stats=none D:/CS552/rtl/writeback.v
+Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
+-- Compiling module writeback
+
+Top level modules:
+	writeback
+
+} {} {}} D:/CS552/rtl/decode.v {1 {vlog -work work -stats=none D:/CS552/rtl/decode.v
+Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
+-- Compiling module decode
+
+Top level modules:
+	decode
+
+} {} {}} D:/CS552/rtl/mem_wb_reg.v {1 {vlog -work work -stats=none D:/CS552/rtl/mem_wb_reg.v
+Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
+-- Compiling module mem_wb_reg
+
+Top level modules:
+	mem_wb_reg
+
+} {} {}}

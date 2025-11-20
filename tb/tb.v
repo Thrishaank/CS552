@@ -17,6 +17,14 @@ module hart_tb ();
     wire [ 4:0] rd_waddr;
     wire [31:0] rd_wdata;
     wire [31:0] pc, next_pc;
+    
+    // Additional retire interface signals for memory debugging
+    wire [31:0] retire_dmem_addr;
+    wire        retire_dmem_ren;
+    wire        retire_dmem_wen;
+    wire [ 3:0] retire_dmem_mask;
+    wire [31:0] retire_dmem_wdata;
+    wire [31:0] retire_dmem_rdata;
 
     hart #(
         .RESET_ADDR (32'h0)
@@ -42,7 +50,13 @@ module hart_tb ();
         .o_retire_rd_waddr  (rd_waddr),
         .o_retire_rd_wdata  (rd_wdata),
         .o_retire_pc        (pc),
-        .o_retire_next_pc   (next_pc)
+        .o_retire_next_pc   (next_pc),
+        .o_retire_dmem_addr (retire_dmem_addr),
+        .o_retire_dmem_ren  (retire_dmem_ren),
+        .o_retire_dmem_wen  (retire_dmem_wen),
+        .o_retire_dmem_mask (retire_dmem_mask),
+        .o_retire_dmem_wdata(retire_dmem_wdata),
+        .o_retire_dmem_rdata(retire_dmem_rdata)
     );
 
     // The tesbench uses separate instruction and data memory banks.
@@ -97,10 +111,10 @@ module hart_tb ();
 
             if (valid) begin
                 // Base information for all instructions.
-                if (imem_rdata[3:0] == 4'b0111 || imem_rdata[6:0] == 7'b111_0011)
+                if (inst[3:0] == 4'b0111 || inst[6:0] == 7'b111_0011)
                     $write("%05d [%08h] %08h r[xx]=xxxxxxxx r[xx]=xxxxxxxx", cycles, pc, inst);
-                else if (imem_rdata[6:0] == 7'b001_0011 || imem_rdata[6:0] == 7'b000_0011 || 
-                         imem_rdata[6:0] == 7'b110_1111 || imem_rdata[6:0] == 7'b110_0111)
+                else if (inst[6:0] == 7'b001_0011 || inst[6:0] == 7'b000_0011 || 
+                         inst[6:0] == 7'b110_1111 || inst[6:0] == 7'b110_0111)
                     $write("%05d [%08h] %08h r[%d]=%08h r[xx]=xxxxxxxx", cycles, pc, inst, rs1_raddr, rs1_rdata);
                 else
                     $write("%05d [%08h] %08h r[%d]=%08h r[%d]=%08h", cycles, pc, inst, rs1_raddr, rs1_rdata, rs2_raddr, rs2_rdata);

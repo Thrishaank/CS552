@@ -1,34 +1,27 @@
 module decode(
     input i_clk, i_rst,
     input [31:0] instruction,
-    input [31:0] reg_write_data,
-    input [31:0] pc_plus4,
-    input reg_write_en,
     input flush_decode,     // Real pipeline flush from execute (always-not-taken predictor)
     // Load-use hazard inputs from EX stage (ID/EX pipeline register)
-    input ex_mem_read,      // EX stage is doing a load
-    input [4:0] ex_rd_addr, // EX stage destination register
-    input ex_reg_write,     // EX stage will write a register
     // Forwarding inputs from MEM stage (EX/MEM pipeline register)
-    input mem_reg_write,    // MEM stage will write a register
     input [4:0] mem_rd_addr, // MEM stage destination register
-    output branch, imm_alu, check_lt_or_eq, branch_expect_n, jump, reg_jump, 
+    input ex_mem_read,      // EX stage is load instruction
+    input prev_valid,      // Previous stage valid signal
+    input [4:0] ex_rd_addr,  // EX stage destination register
+    output branch, imm_alu, check_lt_or_eq, branch_expect_n, jump, is_jalr,
     output i_arith, i_unsigned, i_sub,
     output [2:0] i_opsel,
     output is_auipc, is_lui,
     output [4:0] rs1_addr, rs2_addr, rd_addr,
     output [31:0] imm_out,
     output mem_read, mem_write, is_word, is_h_or_b, is_unsigned_ld,
-    output reg_write,
+    output reg_write_en,
     output stall_pipeline,  // Asserted when load-use hazard detected
-    output wire is_r,
-    output wire is_i,
-    output wire is_s,
-    output wire is_b,
-    output wire is_u,
-    output wire is_j,
+    output wire rs1_used,
+    output wire rs2_used,
     output wire decode_trap,
-    output wire halt
+    output wire halt,
+    output wire valid
 );
     // TODO: Correctly handle no op, make sure no reg is written to //DONE
     // TODO: Output no op if jump or branch success from execute //DONE
@@ -40,39 +33,20 @@ module decode(
     // flush_decode is driven by execute via top-level wiring.
     // When asserted for one cycle, decode outputs a bubble (NOP).
 
-    // Enable bypassing (same-cycle WB -> decode) detection.
-    // If the instruction in this cycle writes a register and also reads it,
-    // some register-file implementations may not present the just-written
-    // value on the read port. 
-    // wire wb_valid        = reg_write_en & (rd_addr != 5'd0);
-    // wire bypass_rs1_from_wb = wb_valid & (rd_addr == rs1_addr);
-    // wire bypass_rs2_from_wb = wb_valid & (rd_addr == rs2_addr);
+    wire is_r, is_i, is_s, is_b, is_u, is_j;
 
-    // Note: To utilize these, gate the operands as:
-    // assign operand1 = bypass_rs1_from_wb ? reg_write_data : rf_rs1;
-    // assign operand2 = bypass_rs2_from_wb ? reg_write_data : rf_rs2;
+    assign rs1_used = ~(is_u | is_j);  // rs1 not used by U and J types
+    assign rs2_used = ~(is_i | is_u | is_j);  // rs2 not used by I, U, J types
 
-    // Load-use hazard detection: When EX stage has a load instruction and
-    // the current instruction in decode uses that loaded register, stall.
-    // Note: With EX-EX and MEM-EX forwarding, we only stall for load-use.
-    wire rs1_used = ~is_u;  // rs1 not used by U-type (lui, auipc)
-    wire rs2_used = ~(is_i | is_u | is_j);  // rs2 not used by I, U, J types
-    
     wire load_use_rs1 = ex_mem_read && (ex_rd_addr != 5'd0) && (ex_rd_addr == rs1_addr) && rs1_used;
     wire load_use_rs2 = ex_mem_read && (ex_rd_addr != 5'd0) && (ex_rd_addr == rs2_addr) && rs2_used;
-    
+
     // Stall pipeline when load-use hazard detected
     // With forwarding, other RAW hazards don't require stalling
-    assign stall_pipeline = load_use_rs1 || load_use_rs2;
-    
-    // EX-EX forwarding (from EX/MEM register) - highest priority
-    // wire ex_fwd_rs1 = ex_reg_write && (ex_rd_addr != 5'd0) && (ex_rd_addr == rs1_addr) && rs1_used;
-    // wire ex_fwd_rs2 = ex_reg_write && (ex_rd_addr != 5'd0) && (ex_rd_addr == rs2_addr) && rs2_used;
-    
-    // MEM-EX forwarding (from MEM/WB register) - lower priority (only if EX doesn't forward)
-    // wire mem_fwd_rs1 = mem_reg_write && (mem_rd_addr != 5'd0) && (mem_rd_addr == rs1_addr) && rs1_used && !ex_fwd_rs1;
-    // wire mem_fwd_rs2 = mem_reg_write && (mem_rd_addr != 5'd0) && (mem_rd_addr == rs2_addr) && rs2_used && !ex_fwd_rs2;
+    assign stall_pipeline = load_use_rs1 | load_use_rs2;
 
+    assign valid = prev_valid & ~stall_pipeline /*& ~flush_decode*/;
+    
     // Flush implementation:
     // - flush_decode input (line 7) will be connected to execute.o_flush_pipeline in hart.v
     // - execute.o_flush_pipeline = o_branch_taken | i_jump (asserted when control flow changes)
@@ -87,7 +61,7 @@ module decode(
 
     // Indicates whether lt or eq output of alu should be check for branch
     assign check_lt_or_eq = instruction[14];
-    // 
+    // Indicates expected branch outcome (1 = not equal/greater than, 0 = equal/less than)
     assign branch_expect_n = instruction[12];
 
     wire [6:0] opcode   = instruction[6:0];
@@ -121,27 +95,25 @@ module decode(
     assign is_s  = (opcode == STORE);
     assign is_b = (opcode == BRANCH);
     assign is_u = (is_lui | is_auipc);
-    assign is_j = is_jal;
+    assign is_j = (opcode == JAL);
     assign i_format = {is_j, is_u, is_b, is_s, is_i, 1'b0};
 
     // Check opcodes for specific instructions
     assign is_lui    = (opcode == LUI);
     assign is_auipc  = (opcode == AUIPC);
-    wire is_jal = opcode == JAL;
-    wire is_jalr = opcode == JALR;
     assign halt = opcode == 7'b1110011;
 
     // Other flags to controls muxes
     assign imm_alu      = ~(is_r | is_b); // Should IMM (1) or REG2 (0) be written to ALU
     // Do not write a register for stores/branches, or on halt/illegal, or on flush (NOP behavior)
-    assign reg_write    = ~(is_s | is_b) & ~halt & ~decode_trap & ~flush_decode; // Should we write to destination register
+    assign reg_write_en    = ~(is_s | is_b) & ~halt /*& ~decode_trap & ~flush_decode*/; // Should we write to destination register
     wire is_load        = (is_i & ~opcode[4] & ~opcode[2]); // Is this a load instruction
     assign is_unsigned_ld = (is_load && funct3[2]); // is load unsigned
-    assign mem_read     = is_load & ~flush_decode; // Kill on flush
-    assign mem_write    = is_s & ~flush_decode; // Kill on flush
-    assign branch       = is_b & ~flush_decode;  // Kill on flush
-    assign jump         = (is_j | is_jalr) & ~flush_decode; // Kill on flush
-    assign reg_jump     = is_jalr & ~flush_decode; // Kill on flush
+    assign mem_read     = is_load /* ~flush_decode*/; // Kill on flush
+    assign mem_write    = is_s /*& ~flush_decode*/; // Kill on flush
+    assign branch       = is_b /*& ~flush_decode*/;  // Kill on flush
+    assign jump         = (is_j | is_jalr) /*& ~flush_decode*/; // Kill on flush
+    assign is_jalr     = opcode == JALR /*& ~flush_decode*/; // Kill on flush
     assign is_word      = funct3[1]; // Are we dealing with word read/write
     assign is_h_or_b    = funct3[0]; // If we are not dealing with work, are we dealing with half-word (1) or byte (0)
     wire is_imm_arith   =  (is_i & opcode[4]); // Is this an arithmetic operation with imm
@@ -151,5 +123,9 @@ module decode(
     assign i_opsel  = (is_r | is_imm_arith) ? funct3 : 3'b000;
     assign i_sub = (is_r & funct7b5);
     assign i_unsigned = funct3[0];
+
+    // Register usage signals for forwarding logic
+    assign rs1_used = ~(is_u | is_j);  // U-type (LUI/AUIPC) and J-type (JAL) don't use rs1
+    assign rs2_used = is_r | is_s | is_b;  // R-type, S-type (stores), and B-type (branches) use rs2
 
 endmodule
