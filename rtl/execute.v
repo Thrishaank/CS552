@@ -52,7 +52,6 @@ module execute (
 
     assign o_branch_taken = branch_taken | jump;
 
-    assign new_pc = (is_jalr) ? {ex_data_out[31:1], 1'b0} : pc_plus_offset;
     assign new_pc = (is_jalr) ? {result[31:1], 1'b0} : pc_plus_offset;
 
     assign pc_write_trap = |new_pc[1:0];
@@ -67,14 +66,11 @@ module execute (
         (rs1_mem_fwd) ? mem_wb_data : //MEM hazard
         reg_out_1;	//No hazard
 
-    assign alu_op2 = imm_alu ? imm : // Immediate operation
     wire [31:0] rs2_fwd_data =
         (rs2_ex_fwd) ? ex_mem_data : //EX hazard
         (rs2_mem_fwd) ? mem_wb_data : //MEM hazard
         reg_out_2;	//No hazard
 
-    assign o_rs1_fwd_data = alu_op1;
-    assign o_rs2_fwd_data = alu_op2;
     assign alu_op2 = imm_alu ? imm : rs2_fwd_data;
 
     assign o_rs1_fwd_data = alu_op1;

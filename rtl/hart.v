@@ -73,6 +73,16 @@ module hart #(
     // address, for the bytes enabled by the mask. When read enable is not
     // asserted, or for bytes not set in the mask, the value is undefined.
     input  wire [31:0] i_dmem_rdata,
+
+    // External memory interface for caches
+    output wire        o_mem_ren,
+    output wire        o_mem_wen,
+    output wire [31:0] o_mem_addr,
+    output wire [31:0] o_mem_wdata,
+    input  wire [31:0] i_mem_rdata,
+    input  wire        i_mem_valid,
+    input  wire        i_mem_ready,
+
 	// The output `retire` interface is used to signal to the testbench that
     // the CPU has completed and retired an instruction. A single cycle
     // implementation will assert this every cycle; however, a pipelined
@@ -150,8 +160,29 @@ module hart #(
     wire [31:0] reg_out_2_id, reg_out_2_ex, reg_out_2_mem, reg_out_2_wb;
     wire [31:0] imm_id, imm_ex;
     wire branch_taken;
-    wire stall;
     wire stall, prev_stall;
+    wire stall_from_decode;
+    
+    // Cache wiring
+    wire icache_busy, dcache_busy;
+    wire [31:0] icache_addr, icache_rdata;
+    wire icache_ren;
+    wire [31:0] dcache_addr_int, dcache_rdata;
+    wire dcache_ren_int, dcache_wen_int;
+    wire [31:0] dcache_wdata_int;
+    wire [3:0] dcache_mask_int;
+    
+    // Memory interface from caches
+    wire icache_mem_ren, dcache_mem_ren;
+    wire icache_mem_wen, dcache_mem_wen;
+    wire [31:0] icache_mem_addr, dcache_mem_addr;
+    wire [31:0] icache_mem_wdata, dcache_mem_wdata;
+    
+    // Stall logic incorporating caches:
+    // - dcache_busy stalls entire pipeline (load/store must complete)
+    // - icache_busy only stalls IF stage (let existing instructions drain)
+    // - stall_from_decode handles load-use hazards
+    assign stall = stall_from_decode | dcache_busy | icache_busy;
     wire valid_if, valid_id, valid_ex, valid_mem, valid_wb;
     wire prev_valid_if;
     wire [31:0] reg_write_data_wb;
@@ -172,25 +203,6 @@ module hart #(
     wire imm_alu_id, imm_alu_ex;
     wire mem_read_id, mem_read_ex, mem_read_mem, mem_read_wb;
     wire mem_write_id, mem_write_ex, mem_write_mem;
-    wire is_word_id, is_word_ex, is_word_mem;
-    wire is_h_or_b_id, is_h_or_b_ex, is_h_or_b_mem;
-    wire is_unsigned_ld_id, is_unsigned_ld_ex, is_unsigned_ld_mem;
-    wire reg_write_en_id, reg_write_en_ex, reg_write_en_mem, reg_write_en_wb;
-    wire [31:0] ex_data_out_ex, ex_data_out_mem, ex_data_out_wb;
-    wire [31:0] mem_data_out_mem, mem_data_out_wb;
-    wire [31:0] rs1_fwd_data, rs2_fwd_data;
-
-    wire [31:0] instruction_in;
-    wire use_imem_rdata;
-
-    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) use_imem_rdata_dff (
-        .i_clk(i_clk),
-        .i_rst(i_rst),
-        .d(1'b1),
-        .q(use_imem_rdata)
-    );
-
-    assign instruction_in = use_imem_rdata ? i_imem_rdata : 32'h00000013; // NOP
     wire is_word_id, is_word_ex, is_word_mem, is_word_wb;
     wire is_h_or_b_id, is_h_or_b_ex, is_h_or_b_mem, is_h_or_b_wb;
     wire is_unsigned_ld_id, is_unsigned_ld_ex, is_unsigned_ld_mem, is_unsigned_ld_wb;
@@ -204,28 +216,9 @@ module hart #(
 
     localparam NOP = 32'h00000013; // NOP instruction (addi x0, x0, 0)
 
-    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) use_imem_rdata_dff (
-        .i_clk(i_clk),
-        .i_rst(i_rst | branch_taken),
-        .d(1'b1),
-        .q(use_imem_rdata)
-    );
-
-    d_ff prev_stall_dff (
-        .i_clk(i_clk),
-        .i_rst(i_rst | branch_taken),
-        .d(stall),
-        .q(prev_stall)
-    );
-
-    d_ff #(.WIDTH(32), .RST_VAL(NOP)) prev_instruction_dff (
-        .i_clk(i_clk),
-        .i_rst(i_rst | branch_taken),
-        .d(instruction_in),
-        .q(prev_instruction)
-    );
-
-    assign instruction_in =  prev_stall ? prev_instruction : (use_imem_rdata ? i_imem_rdata : NOP); // NOP
+    // For icache: always use fresh data from cache
+    // Cache holds output stable during busy, so we can always sample icache_rdata
+    assign instruction_in = icache_rdata;
 
     // Connect fetch module
     fetch #(.RESET_ADDR(RESET_ADDR)) Fetch(
@@ -234,10 +227,35 @@ module hart #(
         .new_pc(new_pc_ex), 
         .stall(stall),
         .branch_taken(branch_taken),
-        .o_imem_raddr(o_imem_raddr), 
+        .o_imem_raddr(icache_addr), 
         .pc(pc_if),
         .valid(valid_if)
     );
+    
+    assign icache_ren = 1'b1;  // Always reading instructions
+    
+    // Instruction cache
+    cache icache (
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .i_req_ren(icache_ren),
+        .i_req_wen(1'b0),
+        .i_req_addr(icache_addr),
+        .i_req_wdata(32'h0),
+        .i_req_mask(4'hF),
+        .o_res_rdata(icache_rdata),
+        .o_busy(icache_busy),
+        .o_mem_ren(icache_mem_ren),
+        .o_mem_wen(icache_mem_wen),
+        .o_mem_addr(icache_mem_addr),
+        .o_mem_wdata(icache_mem_wdata),
+        .i_mem_rdata(i_mem_rdata),
+        .i_mem_valid(i_mem_valid),
+        .i_mem_ready(i_mem_ready)
+    );
+    
+    // Connect icache output to instruction input
+    assign o_imem_raddr = icache_addr;  // For retire interface
 
     if_id_reg IF_ID_Reg(
         .i_clk(i_clk),
@@ -247,9 +265,6 @@ module hart #(
         .i_pc(pc_if),
         .o_pc(pc_id),
         .i_valid(valid_if),
-        .o_valid(prev_valid_if),
-        .i_instruction(instruction_in),
-        .o_instruction(/* not used, instruction passed directly */)
         .o_valid(prev_valid_if)
     );
 
@@ -287,7 +302,7 @@ module hart #(
         .imm_out(imm_id),
         .decode_trap(decode_trap),
         .halt(halt_id),
-        .stall_pipeline(stall),
+        .stall_pipeline(stall_from_decode),
         .prev_valid(prev_valid_if),
         .valid(valid_id)
     );
@@ -369,8 +384,6 @@ module hart #(
         .o_is_lui(is_lui_ex),
         .i_imm_alu(imm_alu_id),
         .o_imm_alu(imm_alu_ex),
-        .i_decode_trap(decode_trap),
-        .o_decode_trap(/* not used, passed as wire */)
         .i_trap(decode_trap),
         .o_trap(trap_ex)
     );
@@ -452,7 +465,6 @@ module hart #(
         .i_valid(valid_ex),
         .o_valid(valid_mem),
         .i_instruction(instruction_ex),
-        .o_instruction(instruction_mem)
         .o_instruction(instruction_mem),
         .i_trap(trap_ex | pc_write_trap),
         .o_trap(trap_mem)
@@ -468,15 +480,41 @@ module hart #(
         .is_word(is_word_mem),
         .is_h_or_b(is_h_or_b_mem),
         .is_unsigned_ld(is_unsigned_ld_mem),
-        .i_dmem_rdata(i_dmem_rdata),
-        .o_dmem_addr(o_dmem_addr),
-        .o_dmem_ren(o_dmem_ren),
-        .o_dmem_wen(o_dmem_wen),
-        .o_dmem_wdata(o_dmem_wdata),
-        .o_dmem_mask(o_dmem_mask),
-        .mem_data_out(mem_data_out_mem),
+        .i_dmem_rdata(dcache_rdata),
+        .o_dmem_addr(dcache_addr_int),
+        .o_dmem_ren(dcache_ren_int),
+        .o_dmem_wen(dcache_wen_int),
+        .o_dmem_wdata(dcache_wdata_int),
+        .o_dmem_mask(dcache_mask_int),
         .mem_trap(mem_trap)
     );
+    
+    // Data cache
+    cache dcache (
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .i_req_ren(dcache_ren_int),
+        .i_req_wen(dcache_wen_int),
+        .i_req_addr(dcache_addr_int),
+        .i_req_wdata(dcache_wdata_int),
+        .i_req_mask(dcache_mask_int),
+        .o_res_rdata(dcache_rdata),
+        .o_busy(dcache_busy),
+        .o_mem_ren(dcache_mem_ren),
+        .o_mem_wen(dcache_mem_wen),
+        .o_mem_addr(dcache_mem_addr),
+        .o_mem_wdata(dcache_mem_wdata),
+        .i_mem_rdata(i_mem_rdata),
+        .i_mem_valid(i_mem_valid),
+        .i_mem_ready(i_mem_ready)
+    );
+    
+    // Pass-through dmem signals for retire interface
+    assign o_dmem_addr = dcache_addr_int;
+    assign o_dmem_ren = dcache_ren_int;
+    assign o_dmem_wen = dcache_wen_int;
+    assign o_dmem_wdata = dcache_wdata_int;
+    assign o_dmem_mask = dcache_mask_int;
 
     mem_wb_reg MEM_WB_Reg(
         .i_clk(i_clk),
@@ -487,8 +525,6 @@ module hart #(
         .o_new_pc(new_pc_wb),
         .i_mem_read(mem_read_mem),
         .o_mem_read(mem_read_wb),
-        .i_mem_data_out(mem_data_out_mem),
-        .o_mem_data_out(mem_data_out_wb),
         .i_ex_data_out(ex_data_out_mem),
         .o_ex_data_out(ex_data_out_wb),
         .i_reg_write_en(reg_write_en_mem),
@@ -523,8 +559,6 @@ module hart #(
         .o_dmem_wen(o_retire_dmem_wen),
         .o_dmem_mask(o_retire_dmem_mask),
         .o_dmem_wdata(o_retire_dmem_wdata),
-        .i_dmem_rdata(i_dmem_rdata),
-        .o_dmem_rdata(o_retire_dmem_rdata)
         .i_is_word(is_word_mem),
         .o_is_word(is_word_wb),
         .i_is_h_or_b(is_h_or_b_mem),
@@ -540,19 +574,7 @@ module hart #(
         .i_rst(i_rst),
         .mem_read(mem_read_wb),
         .ex_data_out(ex_data_out_wb),
-        .mem_data_out(mem_data_out_wb),
-        .reg_write_data(reg_write_data_wb)
-    );
-
-    // Trap signal assignments (no traps implemented yet)
-    assign pc_write_trap = 1'b0;
-    // mem_trap is driven by Memory module
-    assign decode_trap = 1'b0;
-    
-    // Stall signal assignment (no hazard detection implemented yet)
-    assign stall = 1'b0;
-
-        .i_dmem_rdata(i_dmem_rdata),
+        .i_dmem_rdata(dcache_rdata),
         .is_word(is_word_wb),
         .is_h_or_b(is_h_or_b_wb),
         .is_unsigned_ld(is_unsigned_ld_wb),
@@ -574,14 +596,20 @@ module hart #(
 
     assign o_retire_valid = valid_wb;
     assign o_retire_next_pc = new_pc_wb;
-    assign o_retire_trap = pc_write_trap | mem_trap | decode_trap;
-    assign o_retire_halt = halt_wb;
-
-    assign o_retire_dmem_rdata = mem_data_out_wb;
     assign o_retire_trap = trap_wb;
     assign o_retire_halt = halt_wb;
 
-    assign o_retire_dmem_rdata = i_dmem_rdata;
+    assign o_retire_dmem_rdata = dcache_rdata;
+    
+    // Memory arbiter: icache has priority over dcache
+    // Give icache access when it has pending memory requests
+    wire icache_needs_mem = icache_mem_ren | icache_mem_wen;
+    wire grant_icache = icache_needs_mem;
+    
+    assign o_mem_ren = grant_icache ? icache_mem_ren : dcache_mem_ren;
+    assign o_mem_wen = grant_icache ? icache_mem_wen : dcache_mem_wen;
+    assign o_mem_addr = grant_icache ? icache_mem_addr : dcache_mem_addr;
+    assign o_mem_wdata = grant_icache ? icache_mem_wdata : dcache_mem_wdata;
 
 endmodule
 

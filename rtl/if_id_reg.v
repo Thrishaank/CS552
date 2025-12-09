@@ -13,8 +13,6 @@ module if_id_reg (
     input wire i_valid,
     
     // Outputs to ID stage
-    output wire [31:0] o_instruction, // Instruction to decode
-
     output wire [31:0] o_pc,           // Program counter to decode
     output wire o_valid
 );
@@ -43,7 +41,6 @@ module if_id_reg (
     d_ff ff_valid (
         .i_clk(i_clk),
         .i_rst(rst_or_flush),
-        .d(i_stall ? 1'b0 : i_valid),
         .d(i_stall ? o_valid : i_valid),
         .q(o_valid)
     );

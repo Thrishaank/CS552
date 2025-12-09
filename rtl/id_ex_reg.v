@@ -88,7 +88,6 @@ module id_ex_reg (
     output wire        o_branch_expect_n,
     
     // Exception/Control flow outputs
-    output wire        o_decode_trap,
     output wire        o_trap,
     output wire        o_halt,
     output wire        o_valid
@@ -140,7 +139,6 @@ module id_ex_reg (
     assign d_is_unsigned_ld = i_stall ? o_is_unsigned_ld : i_is_unsigned_ld;
     
     // ALU control signals
-    assign d_reg_write  = i_stall ? o_reg_write_en  : i_reg_write_en;
     assign d_reg_write  = i_stall ? 1'b0  : i_reg_write_en;
     assign d_imm_alu    = i_stall ? o_imm_alu    : i_imm_alu;
     assign d_i_arith    = i_stall ? o_i_arith    : i_i_arith;
@@ -170,7 +168,6 @@ module id_ex_reg (
     d_ff #(.WIDTH(32), .RST_VAL(32'h00000000)) ff_reg_out_1 (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_reg_out_1), .q(o_reg_out_1));
     d_ff #(.WIDTH(32), .RST_VAL(32'h00000000)) ff_reg_out_2 (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_reg_out_2), .q(o_reg_out_2));
     d_ff #(.WIDTH(32), .RST_VAL(32'h00000000)) ff_imm       (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_imm),       .q(o_imm));
-    d_ff #(.WIDTH(32), .RST_VAL(32'h00000013)) ff_instruction (.i_clk(i_clk), .i_rst(rst_or_flush), .d(i_stall ? o_instruction : i_instruction), .q(o_instruction));
     d_ff #(.WIDTH(32), .RST_VAL(32'h00000013)) ff_instruction (.i_clk(i_clk), .i_rst(rst_or_flush), .d(i_stall ? NOP : i_instruction), .q(o_instruction));
 
     // Address flip-flops (5-bit) - for forwarding unit
@@ -208,7 +205,6 @@ module id_ex_reg (
     d_ff rs2_used_dff(.i_rst(rst_or_flush), .i_clk(i_clk), .d(i_rs2_used), .q(o_rs2_used));
     
     // Exception/Control flip-flops
-    d_ff ff_decode_trap (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_decode_trap), .q(o_decode_trap));
     d_ff ff_trap (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_trap), .q(o_trap));
     d_ff ff_halt        (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_halt),        .q(o_halt));
     d_ff ff_valid       (.i_clk(i_clk), .i_rst(rst_or_flush), .d(i_stall ? 1'b0 : i_valid), .q(o_valid));

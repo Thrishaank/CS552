@@ -35,9 +35,6 @@ module decode(
 
     wire is_r, is_i, is_s, is_b, is_u, is_j;
 
-
-    assign rs1_used = ~(is_u | is_j);  // rs1 not used by U and J types
-    assign rs2_used = ~(is_i | is_u | is_j);  // rs2 not used by I, U, J types
     assign rs1_used = ~(is_u | is_j | halt);  // rs1 not used by U and J types
     assign rs2_used = ~(is_i | is_u | is_j | halt);  // rs2 not used by I, U, J types
 
@@ -48,7 +45,6 @@ module decode(
     // With forwarding, other RAW hazards don't require stalling
     assign stall_pipeline = load_use_rs1 | load_use_rs2;
 
-    assign valid = prev_valid & ~stall_pipeline /*& ~flush_decode*/;
     assign valid = prev_valid /*& ~flush_decode*/;
     
     // Flush implementation:
@@ -127,9 +123,5 @@ module decode(
     assign i_opsel  = (is_r | is_imm_arith) ? funct3 : 3'b000;
     assign i_sub = (is_r & funct7b5);
     assign i_unsigned = funct3[0];
-
-    // Register usage signals for forwarding logic
-    assign rs1_used = ~(is_u | is_j);  // U-type (LUI/AUIPC) and J-type (JAL) don't use rs1
-    assign rs2_used = is_r | is_s | is_b;  // R-type, S-type (stores), and B-type (branches) use rs2
 
 endmodule

@@ -32,11 +32,11 @@ Signals are now grouped by function:
 - **Exception/Control**: Trap and halt flags
 
 ### 5. **Maintained Critical Features**
-- ✅ Stall logic (holds values when `i_stall` asserted)
-- ✅ Flush logic (clears pipeline bubble when `i_flush` asserted)
-- ✅ Forwarding support (rs1/rs2/rd addresses available)
-- ✅ All data path signals preserved
-- ✅ Structural implementation with D flip-flops
+ Stall logic (holds values when `i_stall` asserted)
+ Flush logic (clears pipeline bubble when `i_flush` asserted)
+ Forwarding support (rs1/rs2/rd addresses available)
+ All data path signals preserved
+ Structural implementation with D flip-flops
 
 ## Signal Count Reduction
 - **Before**: 47 input ports, 47 output ports
