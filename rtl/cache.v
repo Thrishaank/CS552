@@ -1,4 +1,3 @@
-
 `default_nettype none
 
 module cache (
@@ -92,62 +91,58 @@ module cache (
     reg [1:0] valid [DEPTH - 1:0];
     reg       lru   [DEPTH - 1:0];
 
-    integer i, j;  // Loop variables for initialization
-
     wire hit;
     reg eval_hit;
 
     reg [1:0] state;
     reg [1:0] next_state;
     reg update_data, update_tag, update_valid, update_lru;
-    reg cache_write;
+    reg cache_write_hit, cache_write_allocate, first_mem_read, mem_write;
+    reg cache_written, mem_written;
     reg done;
-    reg hit_way;  // Track which way hit: 0 for way0, 1 for way1
-    reg data_way; // Track which way to read data from
     wire in_0, in_1;
+    reg was_write;
+    reg idled_first_cycle;
+    reg idled_first, should_idle;
+    reg fill_way;  // Track which way was filled during MEM_READ
+    reg hit_way;   // Track which way hit during EVAL for write-hit
+    
+    // Latched write-hit signals (CPU changes them after we assert done)
+    reg [31:0] write_hit_addr;
+    reg [31:0] write_hit_wdata;
+    reg [3:0] write_hit_mask;
 
-    integer byte_idx;
+    integer i;
+    integer j;
 
-    reg [31:0] req_addr_latched;  // Latch request address
-    reg [31:0] req_wdata_latched; // Latch write data
-    reg [3:0]  req_mask_latched;  // Latch write mask
-    reg req_wen_latched;          // Latch write enable
-    wire [31:0] addr_for_cache;   // Select current or latched address
     reg next_word;
-    reg [1:0] read_word_cnt;
+    reg [1:0] read_word_cnt, read_word_cnt_prev;
 
     localparam IDLE = 2'b00;
     localparam EVAL = 2'b01;
     localparam MEM_READ = 2'b10;
     localparam MEM_WRITE = 2'b11;
     
-    // Use current address in IDLE for immediate hit detection, latched otherwise
-    assign addr_for_cache = (state == IDLE) ? i_req_addr : req_addr_latched;
-    
     always @(posedge i_clk) begin
         if (i_rst) begin
             state <= IDLE;
+            fill_way <= 1'b0;
             hit_way <= 1'b0;
-            data_way <= 1'b0;
+            write_hit_addr <= 32'h0;
+            write_hit_wdata <= 32'h0;
+            write_hit_mask <= 4'h0;
         end else begin
             state <= next_state;
-            // Capture which way hit WHEN ENTERING EVAL state from IDLE
-            // Use i_req_addr since req_addr_latched isn't set until this same clock edge
-            if ((state == IDLE) && (next_state == EVAL)) begin
-                if (hit) begin
-                    // Hit: determine which way matched
-                    if (i_req_addr[31:S+O] == tags0[i_req_addr[O+S-1:O]] && valid[i_req_addr[O+S-1:O]][0]) begin
-                        data_way <= 1'b0;
-                        hit_way <= 1'b0;
-                    end else begin
-                        data_way <= 1'b1;
-                        hit_way <= 1'b1;
-                    end
-                end else begin
-                    // Miss: use LRU to determine which way to allocate
-                    hit_way <= lru[i_req_addr[O+S-1:O]];
-                    data_way <= lru[i_req_addr[O+S-1:O]];
-                end
+            // Capture which way we're filling when entering MEM_READ
+            if (state == EVAL && next_state == MEM_READ) begin
+                fill_way <= lru[i_req_addr[O+S-1:O]];
+            end
+            // Capture which way hit and all request signals for write-hit
+            if (state == EVAL && hit && was_write) begin
+                hit_way <= in_0 ? 1'b0 : 1'b1;
+                write_hit_addr <= i_req_addr;
+                write_hit_wdata <= i_req_wdata;
+                write_hit_mask <= i_req_mask;
             end
         end
     end
@@ -155,24 +150,52 @@ module cache (
     always @(posedge i_clk) begin
         if (i_rst) begin
             read_word_cnt <= 2'b00;
-        end else if (state == EVAL && next_state == MEM_READ) begin
-            read_word_cnt <= 2'b00;  // Reset counter when starting line fill
         end else if (next_word) begin
             read_word_cnt <= read_word_cnt + 1'b1;
         end
     end
 
     always @(posedge i_clk) begin
+        if (i_rst) begin 
+            read_word_cnt_prev <= 2'b00;
+        end else begin
+            read_word_cnt_prev <= read_word_cnt;
+        end
+    end
+
+    always @(posedge i_clk) begin
+        if (done) begin
+            cache_written <= 1'b0;
+        end else if (cache_write_hit | cache_write_allocate) begin
+            cache_written <= 1'b1;
+        end
+    end
+
+    always @(posedge i_clk) begin
+        if (done) begin
+            mem_written <= 1'b0;
+        end else if (mem_write) begin
+            mem_written <= 1'b1;
+        end
+    end
+
+    always @(posedge i_clk) begin
         if (i_rst) begin
-            req_addr_latched <= 32'h0;
-            req_wdata_latched <= 32'h0;
-            req_mask_latched <= 4'h0;
-            req_wen_latched <= 1'b0;
-        end else if (state == IDLE && next_state == EVAL) begin
-            req_addr_latched <= i_req_addr;  // Latch address at start of transaction
-            req_wdata_latched <= i_req_wdata; // Latch write data
-            req_mask_latched <= i_req_mask;   // Latch write mask
-            req_wen_latched <= i_req_wen;     // Latch write enable
+            was_write <= 1'b0;
+        end else if (done) begin
+            was_write <= 1'b0;
+        end else if (i_req_wen) begin
+            was_write <= 1'b1;
+        end
+    end
+
+    always @(posedge i_clk) begin
+        if (i_rst) begin
+            idled_first_cycle = 1'b1;
+        end else if (idled_first) begin
+            idled_first_cycle = 1'b1;
+        end else if (should_idle) begin
+            idled_first_cycle = 1'b0;
         end
     end
 
@@ -185,108 +208,97 @@ module cache (
         update_data = 1'b0;
         next_word = 1'b0;
         update_lru = 1'b0;
-        cache_write = 1'b0;
+        cache_write_hit = 1'b0;
+        cache_write_allocate = 1'b0;
+        mem_write = 1'b0;
+        first_mem_read = 1'b0;
+        idled_first = 1'b0;
+        should_idle = 1'b0;
 
         if (state == IDLE) begin
+            done = 1'b1;
+            // if (~idled_first_cycle) begin
+            //     idled_first = 1'b1;
+            // end else 
             if (i_req_ren | i_req_wen) begin
-                done = 1'b0;  // New request, not done yet
                 next_state = EVAL;
                 eval_hit = 1'b1;
-            end else begin
-                done = 1'b1;  // No request, idle and done
             end
         end else if (state == EVAL) begin
             eval_hit = 1'b1;
             if (~hit) begin
-                next_state = MEM_READ;
-            end else begin
-                if (req_wen_latched) begin
-                    // Write hit: update cache and write through to memory, but don't stall CPU
-                    // Complete in one cycle, no busy signal
-                    cache_write = 1'b1;
-                    update_lru = 1'b1;
-                    next_state = IDLE;
-                    done = 1'b1;  // Done immediately on write hit
-                end else begin
-                    // Read hit: done
-                    update_lru = 1'b1;  // Update LRU on read hit
-                    done = 1'b1;
-                    next_state = IDLE;
+                if (i_mem_ready) begin
+                    next_state = MEM_READ;
+                    first_mem_read = 1'b1;
                 end
+            end else if (was_write) begin
+                cache_write_hit = 1'b1;  // Write hit: write to cache immediately
+                update_lru = 1'b1;
+                done = 1'b1;
+            end else begin
+                done = 1'b1;
+                // next_state = IDLE;
+                should_idle = 1'b1;
             end
         end else if (state == MEM_READ) begin
             if (i_mem_valid & (read_word_cnt == D - 1)) begin
-                next_state = (req_wen_latched) ? MEM_WRITE : IDLE;
-                done = (req_wen_latched) ? 1'b0 : 1'b1;
+                if (was_write) begin
+                    next_state = MEM_WRITE;
+                end else begin
+                    next_state = IDLE;
+                    update_lru = 1'b1;
+                    should_idle = 1'b1;
+                end
+                update_data = 1'b1;
+                next_word = 1'b1;
+            end else if (i_mem_valid && (read_word_cnt == D - 2)) begin
                 update_data = 1'b1;
                 update_tag = 1'b1;
                 update_valid = 1'b1;
-                update_lru = 1'b1;  // Update LRU after line fill completes
                 next_word = 1'b1;
             end else if (i_mem_valid & (read_word_cnt != D - 1)) begin
                 next_word = 1'b1;
                 update_data = 1'b1;
             end
+
         end else if (state == MEM_WRITE) begin
-            cache_write = 1'b1;
-            update_lru = 1'b1;  // Update LRU after write completes
-            next_state = IDLE;
+            cache_write_allocate = 1'b1;
+            update_lru = 1'b1;
             done = 1'b1;
+            next_state = IDLE;
         end
     end
 
-    // Hit detection for immediate response (uses addr_for_cache)
-    assign in_0 = (addr_for_cache[31:S+O] == tags0[addr_for_cache[O+S-1:O]] && valid[addr_for_cache[O+S-1:O]][0]);
-    assign in_1 = (addr_for_cache[31:S+O] == tags1[addr_for_cache[O+S-1:O]] && valid[addr_for_cache[O+S-1:O]][1]);
-
-    // Hit detection for data path (uses req_addr_latched)
-    wire in_0_latched = (req_addr_latched[31:S+O] == tags0[req_addr_latched[O+S-1:O]] && valid[req_addr_latched[O+S-1:O]][0]);
-    wire in_1_latched = (req_addr_latched[31:S+O] == tags1[req_addr_latched[O+S-1:O]] && valid[req_addr_latched[O+S-1:O]][1]);
+    assign in_0 = (i_req_addr[31:S+O] == tags0[i_req_addr[O+S-1:O]] && valid[i_req_addr[O+S-1:O]][0]);
+    assign in_1 = (i_req_addr[31:S+O] == tags1[i_req_addr[O+S-1:O]] && valid[i_req_addr[O+S-1:O]][1]);
 
     assign hit = in_0 || in_1;
 
-    // Busy when: not in IDLE and not done, OR in IDLE with new miss request
-    assign o_busy = (state != IDLE & ~done) | ((state == IDLE) & (i_req_ren | i_req_wen) & ~hit);
+    // Busy is high on miss, tag in corresponding cache line does not match request address
+    assign o_busy = (~hit | ~done); // (~hit | ~done)
 
-    // Always use latched address for reading data from arrays
-    wire [1:0] read_word_index = req_addr_latched[O-1:2];
-    wire [O+S-1:O] read_set_index = req_addr_latched[O+S-1:O];
-    
-    // For reads: use data_way register (set when entering EVAL)
-    assign o_res_rdata = (data_way == 1'b0) ? datas0[read_set_index][read_word_index] :
-                                               datas1[read_set_index][read_word_index];
+    assign o_res_rdata = in_0 ? datas0[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] :
+                         in_1 ? datas1[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] :
+                         32'h00000000;
 
     // Memory read/write logic
-    // On MEM_READ, stream the whole line starting at the line-aligned address.
-    // On MEM_WRITE, write the specific word-aligned address of the request.
-    wire [31:0] mem_addr_read  = {req_addr_latched[31:O], read_word_cnt, 2'b00};
-    wire [31:0] mem_addr_write = {req_addr_latched[31:2], 2'b00};
-    assign o_mem_addr = (state == MEM_READ) ? mem_addr_read : mem_addr_write;
-    assign o_mem_ren  = (state == MEM_READ);
-    assign o_mem_wen  = (state == MEM_WRITE) | (state == EVAL & hit & req_wen_latched);
-
-    // Masked write-through data: merge existing cached word with requested bytes.
-    // This ensures external memory observes the same byte updates as the cache.
-    wire [31:0] byte_mask32 = { {8{req_mask_latched[3]}}, {8{req_mask_latched[2]}}, {8{req_mask_latched[1]}}, {8{req_mask_latched[0]}} };
-    wire [31:0] cached_word_for_write = (hit_way == 1'b0)
-        ? datas0[req_addr_latched[O+S-1:O]][req_addr_latched[O-1:2]]
-        : datas1[req_addr_latched[O+S-1:O]][req_addr_latched[O-1:2]];
-    wire [31:0] masked_wdata = (cached_word_for_write & ~byte_mask32) | (req_wdata_latched & byte_mask32);
-    assign o_mem_wdata = masked_wdata;  // Write-through: send masked merge to memory
+    assign o_mem_addr = {i_req_addr[31:O], read_word_cnt, 2'b00};
+    assign o_mem_ren  = (read_word_cnt != read_word_cnt_prev && state == MEM_READ) || first_mem_read;
+    assign o_mem_wen  = hit & was_write;
+    assign o_mem_wdata = (in_0) ? (datas0[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) 
+                                : (datas1[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} })           ;
 
     // Cache valid logic
     always @(posedge i_clk) begin
         if (i_rst) begin
             for (i = 0; i < DEPTH; i = i + 1) begin
                 valid[i] <= 2'b00;
-                tags0[i] <= {T{1'b1}};  // Initialize to all 1's to avoid false matches with 0 tags
-                tags1[i] <= {T{1'b1}};
             end
         end else if (update_valid) begin
-            if (hit_way == 1'b0) begin
-                valid[req_addr_latched[O+S-1:O]][0] <= 1'b1;
+            if (fill_way == 1'b0) begin
+                valid[i_req_addr[O+S-1:O]][0] <= 1'b1;
             end else begin
-                valid[req_addr_latched[O+S-1:O]][1] <= 1'b1;
+                valid[i_req_addr[O+S-1:O]][1] <= 1'b1;
             end
         end
     end
@@ -297,40 +309,51 @@ module cache (
                 lru[j] <= 1'b0;
             end
         end else if (update_lru) begin
-            // Use hit_way to determine which way was accessed
-            // hit_way is set in EVAL for hits, or in MEM_READ for miss allocations
-            if (hit_way == 1'b0) begin
-                lru[req_addr_latched[O+S-1:O]] <= 1'b1;  // way 0 accessed, mark way 1 for next eviction
-            end else begin
-                lru[req_addr_latched[O+S-1:O]] <= 1'b0;  // way 1 accessed, mark way 0 for next eviction
+            if (in_0) begin
+                lru[i_req_addr[O+S-1:O]] <= 1'b1;
+            end else if (in_1) begin
+                lru[i_req_addr[O+S-1:O]] <= 1'b0;
             end
         end
     end
 
     always @(posedge i_clk) begin
-        if (update_data) begin
-            if (hit_way == 1'b0) begin
-                datas0[req_addr_latched[O+S-1:O]][read_word_cnt] <= i_mem_rdata;
-            end else begin
-                datas1[req_addr_latched[O+S-1:O]][read_word_cnt] <= i_mem_rdata;
+        if (i_rst) begin
+            for (i = 0; i < DEPTH; i = i + 1) begin
+                for (j = 0; j < D; j = j + 1) begin
+                    datas0[i][j] <= 32'h0;
+                    datas1[i][j] <= 32'h0;
+                end
             end
-        end else if (cache_write) begin
-            if (hit_way == 1'b0) begin
-                // Write to way 0
-                datas0[req_addr_latched[O+S-1:O]][req_addr_latched[O-1:2]] <= (datas0[req_addr_latched[O+S-1:O]][req_addr_latched[O-1:2]] & ~{ {8{req_mask_latched[3]}}, {8{req_mask_latched[2]}}, {8{req_mask_latched[1]}}, {8{req_mask_latched[0]}} }) | (req_wdata_latched & { {8{req_mask_latched[3]}}, {8{req_mask_latched[2]}}, {8{req_mask_latched[1]}}, {8{req_mask_latched[0]}} });
+        end else if (update_data) begin
+            if (fill_way == 1'b0) begin
+                datas0[i_req_addr[O+S-1:O]][read_word_cnt] <= i_mem_rdata;
             end else begin
-                // Write to way 1
-                datas1[req_addr_latched[O+S-1:O]][req_addr_latched[O-1:2]] <= (datas1[req_addr_latched[O+S-1:O]][req_addr_latched[O-1:2]] & ~{ {8{req_mask_latched[3]}}, {8{req_mask_latched[2]}}, {8{req_mask_latched[1]}}, {8{req_mask_latched[0]}} }) | (req_wdata_latched & { {8{req_mask_latched[3]}}, {8{req_mask_latched[2]}}, {8{req_mask_latched[1]}}, {8{req_mask_latched[0]}} });
+                datas1[i_req_addr[O+S-1:O]][read_word_cnt] <= i_mem_rdata;
+            end
+        end else if (cache_write_allocate) begin
+            // Write-allocate: write to the way that was just filled (saved in fill_way)
+            if (fill_way == 1'b0) begin
+                datas0[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] <= (datas0[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} });
+            end else begin
+                datas1[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] <= (datas1[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} });
+            end
+        end else if (cache_write_hit) begin
+            // Write-hit: write to the way that hit (use latched signals)
+            if (hit_way == 1'b0) begin
+                datas0[write_hit_addr[O+S-1:O]][write_hit_addr[O-1:2]] <= (datas0[write_hit_addr[O+S-1:O]][write_hit_addr[O-1:2]] & ~{ {8{write_hit_mask[3]}}, {8{write_hit_mask[2]}}, {8{write_hit_mask[1]}}, {8{write_hit_mask[0]}} }) | (write_hit_wdata & { {8{write_hit_mask[3]}}, {8{write_hit_mask[2]}}, {8{write_hit_mask[1]}}, {8{write_hit_mask[0]}} });
+            end else begin
+                datas1[write_hit_addr[O+S-1:O]][write_hit_addr[O-1:2]] <= (datas1[write_hit_addr[O+S-1:O]][write_hit_addr[O-1:2]] & ~{ {8{write_hit_mask[3]}}, {8{write_hit_mask[2]}}, {8{write_hit_mask[1]}}, {8{write_hit_mask[0]}} }) | (write_hit_wdata & { {8{write_hit_mask[3]}}, {8{write_hit_mask[2]}}, {8{write_hit_mask[1]}}, {8{write_hit_mask[0]}} });
             end
         end
     end
 
     always @(posedge i_clk) begin
         if (update_tag) begin
-            if (hit_way == 1'b0) begin
-                tags0[req_addr_latched[O+S-1:O]] <= req_addr_latched[31:S+O];
+            if (fill_way == 1'b0) begin
+                tags0[i_req_addr[O+S-1:O]] <= i_req_addr[31:S+O];
             end else begin
-                tags1[req_addr_latched[O+S-1:O]] <= req_addr_latched[31:S+O];
+                tags1[i_req_addr[O+S-1:O]] <= i_req_addr[31:S+O];
             end
         end
     end
