@@ -97,20 +97,13 @@ module cache (
     reg [1:0] state;
     reg [1:0] next_state;
     reg update_data, update_tag, update_valid, update_lru;
-    reg cache_write_hit, cache_write_allocate, first_mem_read, mem_write;
+    reg cache_write, first_mem_read, mem_write;
     reg cache_written, mem_written;
     reg done;
     wire in_0, in_1;
     reg was_write;
     reg idled_first_cycle;
     reg idled_first, should_idle;
-    reg fill_way;  // Track which way was filled during MEM_READ
-    reg hit_way;   // Track which way hit during EVAL for write-hit
-    
-    // Latched write-hit signals (CPU changes them after we assert done)
-    reg [31:0] write_hit_addr;
-    reg [31:0] write_hit_wdata;
-    reg [3:0] write_hit_mask;
 
     integer i;
     integer j;
@@ -126,24 +119,8 @@ module cache (
     always @(posedge i_clk) begin
         if (i_rst) begin
             state <= IDLE;
-            fill_way <= 1'b0;
-            hit_way <= 1'b0;
-            write_hit_addr <= 32'h0;
-            write_hit_wdata <= 32'h0;
-            write_hit_mask <= 4'h0;
         end else begin
             state <= next_state;
-            // Capture which way we're filling when entering MEM_READ
-            if (state == EVAL && next_state == MEM_READ) begin
-                fill_way <= lru[i_req_addr[O+S-1:O]];
-            end
-            // Capture which way hit and all request signals for write-hit
-            if (state == EVAL && hit && was_write) begin
-                hit_way <= in_0 ? 1'b0 : 1'b1;
-                write_hit_addr <= i_req_addr;
-                write_hit_wdata <= i_req_wdata;
-                write_hit_mask <= i_req_mask;
-            end
         end
     end
 
@@ -166,7 +143,7 @@ module cache (
     always @(posedge i_clk) begin
         if (done) begin
             cache_written <= 1'b0;
-        end else if (cache_write_hit | cache_write_allocate) begin
+        end else if (cache_write) begin
             cache_written <= 1'b1;
         end
     end
@@ -180,12 +157,10 @@ module cache (
     end
 
     always @(posedge i_clk) begin
-        if (i_rst) begin
-            was_write <= 1'b0;
-        end else if (done) begin
-            was_write <= 1'b0;
-        end else if (i_req_wen) begin
-            was_write <= 1'b1;
+        if (i_req_wen) begin
+             was_write <= 1'b1;
+        end else if (i_req_ren) begin
+             was_write <= 1'b0;
         end
     end
 
@@ -208,8 +183,7 @@ module cache (
         update_data = 1'b0;
         next_word = 1'b0;
         update_lru = 1'b0;
-        cache_write_hit = 1'b0;
-        cache_write_allocate = 1'b0;
+        cache_write = 1'b0;
         mem_write = 1'b0;
         first_mem_read = 1'b0;
         idled_first = 1'b0;
@@ -232,7 +206,6 @@ module cache (
                     first_mem_read = 1'b1;
                 end
             end else if (was_write) begin
-                cache_write_hit = 1'b1;  // Write hit: write to cache immediately
                 update_lru = 1'b1;
                 done = 1'b1;
             end else begin
@@ -262,10 +235,17 @@ module cache (
             end
 
         end else if (state == MEM_WRITE) begin
-            cache_write_allocate = 1'b1;
             update_lru = 1'b1;
-            done = 1'b1;
             next_state = IDLE;
+            // if (~cache_written) begin
+            //     cache_write = 1'b1;
+            // end else if (cache_written & ~mem_written) begin
+            //     mem_write = 1'b1;
+            // end else if (cache_written & mem_written) begin
+            //     next_state = IDLE;
+            //     update_lru = 1'b1;
+            //     should_idle = 1'b1;
+            // end
         end
     end
 
@@ -275,11 +255,11 @@ module cache (
     assign hit = in_0 || in_1;
 
     // Busy is high on miss, tag in corresponding cache line does not match request address
-    assign o_busy = (~hit | ~done); // (~hit | ~done)
+    assign o_busy = (~hit | ~done);
 
-    assign o_res_rdata = in_0 ? datas0[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] :
-                         in_1 ? datas1[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] :
-                         32'h00000000;
+    assign o_res_rdata = i_req_addr[31:S+O] == tags0[i_req_addr[O+S-1:O]] ? datas0[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] :
+                         i_req_addr[31:S+O] == tags1[i_req_addr[O+S-1:O]] ? datas1[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] :
+                         32'hxxxxxxx;
 
     // Memory read/write logic
     assign o_mem_addr = {i_req_addr[31:O], read_word_cnt, 2'b00};
@@ -295,7 +275,7 @@ module cache (
                 valid[i] <= 2'b00;
             end
         end else if (update_valid) begin
-            if (fill_way == 1'b0) begin
+            if (lru[i_req_addr[O+S-1:O]] == 1'b0) begin
                 valid[i_req_addr[O+S-1:O]][0] <= 1'b1;
             end else begin
                 valid[i_req_addr[O+S-1:O]][1] <= 1'b1;
@@ -318,39 +298,30 @@ module cache (
     end
 
     always @(posedge i_clk) begin
-        if (i_rst) begin
-            for (i = 0; i < DEPTH; i = i + 1) begin
-                for (j = 0; j < D; j = j + 1) begin
-                    datas0[i][j] <= 32'h0;
-                    datas1[i][j] <= 32'h0;
-                end
-            end
-        end else if (update_data) begin
-            if (fill_way == 1'b0) begin
+        if (update_data & (!was_write || read_word_cnt != i_req_addr[O-1:2])) begin
+            if (lru[i_req_addr[O+S-1:O]] == 1'b0) begin
                 datas0[i_req_addr[O+S-1:O]][read_word_cnt] <= i_mem_rdata;
             end else begin
                 datas1[i_req_addr[O+S-1:O]][read_word_cnt] <= i_mem_rdata;
             end
-        end else if (cache_write_allocate) begin
-            // Write-allocate: write to the way that was just filled (saved in fill_way)
-            if (fill_way == 1'b0) begin
-                datas0[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] <= (datas0[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} });
+        end else if (update_data & was_write & read_word_cnt == i_req_addr[O-1:2]) begin
+            if (lru[i_req_addr[O+S-1:O]] == 1'b0) begin
+                datas0[i_req_addr[O+S-1:O]][read_word_cnt] <= (i_mem_rdata & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} });
             end else begin
-                datas1[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] <= (datas1[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} });
+                datas1[i_req_addr[O+S-1:O]][read_word_cnt] <= (i_mem_rdata & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} });
             end
-        end else if (cache_write_hit) begin
-            // Write-hit: write to the way that hit (use latched signals)
-            if (hit_way == 1'b0) begin
-                datas0[write_hit_addr[O+S-1:O]][write_hit_addr[O-1:2]] <= (datas0[write_hit_addr[O+S-1:O]][write_hit_addr[O-1:2]] & ~{ {8{write_hit_mask[3]}}, {8{write_hit_mask[2]}}, {8{write_hit_mask[1]}}, {8{write_hit_mask[0]}} }) | (write_hit_wdata & { {8{write_hit_mask[3]}}, {8{write_hit_mask[2]}}, {8{write_hit_mask[1]}}, {8{write_hit_mask[0]}} });
-            end else begin
-                datas1[write_hit_addr[O+S-1:O]][write_hit_addr[O-1:2]] <= (datas1[write_hit_addr[O+S-1:O]][write_hit_addr[O-1:2]] & ~{ {8{write_hit_mask[3]}}, {8{write_hit_mask[2]}}, {8{write_hit_mask[1]}}, {8{write_hit_mask[0]}} }) | (write_hit_wdata & { {8{write_hit_mask[3]}}, {8{write_hit_mask[2]}}, {8{write_hit_mask[1]}}, {8{write_hit_mask[0]}} });
+        end else if (hit & i_req_wen) begin
+            if (in_0) begin
+                datas0[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] <= (datas0[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} });
+            end else if (in_1) begin
+                datas1[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] <= (datas1[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} });
             end
         end
     end
 
     always @(posedge i_clk) begin
         if (update_tag) begin
-            if (fill_way == 1'b0) begin
+            if (lru[i_req_addr[O+S-1:O]] == 1'b0) begin
                 tags0[i_req_addr[O+S-1:O]] <= i_req_addr[31:S+O];
             end else begin
                 tags1[i_req_addr[O+S-1:O]] <= i_req_addr[31:S+O];
@@ -361,4 +332,5 @@ module cache (
 
 endmodule
 
+`default_nettype wire
 `default_nettype wire

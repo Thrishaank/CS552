@@ -11,6 +11,11 @@ module hart_tb ();
     reg         mem_valid;
     reg         mem_ready;
     
+    // Arbiter signals for caches
+    wire        imem_ren;
+    reg         imem_ready, imem_valid;
+    reg         dmem_ready, dmem_valid;
+    
     // Cache statistics
     integer icache_hits, icache_misses;
     integer dcache_hits, dcache_misses;
@@ -74,6 +79,12 @@ module hart_tb ();
         .i_mem_rdata  (mem_rdata),
         .i_mem_valid  (mem_valid),
         .i_mem_ready  (mem_ready),
+        // Arbiter ports for separate cache control
+        .o_imem_ren   (imem_ren),
+        .i_imem_ready (imem_ready),
+        .i_imem_valid (imem_valid),
+        .i_dmem_ready (dmem_ready),
+        .i_dmem_valid (dmem_valid),
         // Retire interface
         .o_retire_valid     (valid),
         .o_retire_inst      (inst),
@@ -94,6 +105,26 @@ module hart_tb ();
         .o_retire_dmem_wdata(retire_dmem_wdata),
         .o_retire_dmem_rdata(retire_dmem_rdata)
     );
+
+    // Testbench memory arbiter - mirrors hart's internal arbiter
+    // Give icache priority when it needs memory (indicated by imem_ren)
+    wire grant_icache = imem_ren;  // imem_ren correctly indicates icache memory request
+    
+    always @(*) begin
+        if (grant_icache) begin
+            // Icache has priority and is requesting memory
+            imem_ready = mem_ready;
+            imem_valid = mem_valid;
+            dmem_ready = 1'b0;
+            dmem_valid = 1'b0;
+        end else begin
+            // Icache not requesting, dcache gets access
+            imem_ready = 1'b0;
+            imem_valid = 1'b0;
+            dmem_ready = mem_ready;
+            dmem_valid = mem_valid;
+        end
+    end
 
     // Memory controller FSM - simulates configurable memory latency
     always @(posedge clk or posedge rst) begin

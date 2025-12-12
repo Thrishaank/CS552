@@ -75,12 +75,12 @@ Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  
 Top level modules:
 	alu
 
-} {} {}} D:/CS552/rtl/decode.v {1 {vlog -work work -stats=none D:/CS552/rtl/decode.v
+} {} {}} D:/CS552/rtl/mem_wb_reg.v {1 {vlog -work work -stats=none D:/CS552/rtl/mem_wb_reg.v
 Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
--- Compiling module decode
+-- Compiling module mem_wb_reg
 
 Top level modules:
-	decode
+	mem_wb_reg
 
 } {} {}} D:/CS552/rtl/writeback.v {1 {vlog -work work -stats=none D:/CS552/rtl/writeback.v
 Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
@@ -89,11 +89,11 @@ Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  
 Top level modules:
 	writeback
 
-} {} {}} D:/CS552/rtl/mem_wb_reg.v {1 {vlog -work work -stats=none D:/CS552/rtl/mem_wb_reg.v
+} {} {}} D:/CS552/rtl/decode.v {1 {vlog -work work -stats=none D:/CS552/rtl/decode.v
 Model Technology ModelSim - Intel FPGA Edition vlog 10.5b Compiler 2016.10 Oct  5 2016
--- Compiling module mem_wb_reg
+-- Compiling module decode
 
 Top level modules:
-	mem_wb_reg
+	decode
 
 } {} {}}

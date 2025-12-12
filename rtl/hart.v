@@ -82,6 +82,13 @@ module hart #(
     input  wire [31:0] i_mem_rdata,
     input  wire        i_mem_valid,
     input  wire        i_mem_ready,
+    
+    // Separate cache control signals (for autograder testbench)
+    output wire        o_imem_ren,
+    input  wire        i_imem_ready,
+    input  wire        i_imem_valid,
+    input  wire        i_dmem_ready,
+    input  wire        i_dmem_valid,
 
 	// The output `retire` interface is used to signal to the testbench that
     // the CPU has completed and retired an instruction. A single cycle
@@ -178,6 +185,19 @@ module hart #(
     wire [31:0] icache_mem_addr, dcache_mem_addr;
     wire [31:0] icache_mem_wdata, dcache_mem_wdata;
     
+    // Export icache memory request signal for autograder arbiter
+    assign o_imem_ren = icache_mem_ren;
+    
+    // Internal memory arbiter - gives icache priority over dcache
+    wire icache_needs_mem = icache_mem_ren | icache_mem_wen;
+    wire grant_icache = icache_needs_mem;
+    
+    // Use autograder-provided gated signals
+    wire icache_mem_ready_gated = i_imem_ready;
+    wire icache_mem_valid_gated = i_imem_valid;
+    wire dcache_mem_ready_gated = i_dmem_ready;
+    wire dcache_mem_valid_gated = i_dmem_valid;
+    
     // Stall logic incorporating caches:
     // - dcache_busy stalls entire pipeline (load/store must complete)
     // - icache_busy only stalls IF stage (let existing instructions drain)
@@ -250,8 +270,8 @@ module hart #(
         .o_mem_addr(icache_mem_addr),
         .o_mem_wdata(icache_mem_wdata),
         .i_mem_rdata(i_mem_rdata),
-        .i_mem_valid(i_mem_valid),
-        .i_mem_ready(i_mem_ready)
+        .i_mem_valid(icache_mem_valid_gated),
+        .i_mem_ready(icache_mem_ready_gated)
     );
     
     // Connect icache output to instruction input
@@ -470,7 +490,7 @@ module hart #(
         .o_trap(trap_mem)
     );
 
-    memory Memory(
+    student_memory Memory(
         .i_clk(i_clk),
         .i_rst(i_rst),
         .w_data(reg_out_2_mem),
@@ -505,8 +525,8 @@ module hart #(
         .o_mem_addr(dcache_mem_addr),
         .o_mem_wdata(dcache_mem_wdata),
         .i_mem_rdata(i_mem_rdata),
-        .i_mem_valid(i_mem_valid),
-        .i_mem_ready(i_mem_ready)
+        .i_mem_valid(dcache_mem_valid_gated),
+        .i_mem_ready(dcache_mem_ready_gated)
     );
     
     // Pass-through dmem signals for retire interface
@@ -601,11 +621,7 @@ module hart #(
 
     assign o_retire_dmem_rdata = dcache_rdata;
     
-    // Memory arbiter: icache has priority over dcache
-    // Give icache access when it has pending memory requests
-    wire icache_needs_mem = icache_mem_ren | icache_mem_wen;
-    wire grant_icache = icache_needs_mem;
-    
+    // Memory arbiter: multiplex memory requests based on priority
     assign o_mem_ren = grant_icache ? icache_mem_ren : dcache_mem_ren;
     assign o_mem_wen = grant_icache ? icache_mem_wen : dcache_mem_wen;
     assign o_mem_addr = grant_icache ? icache_mem_addr : dcache_mem_addr;

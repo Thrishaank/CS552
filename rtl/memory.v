@@ -1,4 +1,4 @@
-module memory(
+module student_memory(
     input i_clk, i_rst,
     input [31:0] address, w_data,
     input mem_read, mem_write, is_word, is_h_or_b, is_unsigned_ld,

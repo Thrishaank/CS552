@@ -1,4 +1,5 @@
 `default_nettype none
+
 ////////////PLEASE DELETE/ ADD SIGNALS AS NECESSARY/////////////
 // ID/EX Pipeline Register
 // Holds data between Decode and Execute stages
@@ -93,6 +94,7 @@ module id_ex_reg (
     output wire        o_valid
 );
 
+    // NOP parameter - needed for stall handling
     localparam [31:0] NOP = 32'h00000013; // NOP instruction (addi x0, x0, 0)
 
     // Internal wires for mux outputs (D inputs to flip-flops)
