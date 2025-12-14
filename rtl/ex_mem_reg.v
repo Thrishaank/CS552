@@ -3,6 +3,8 @@ module ex_mem_reg(
 		i_clk, //Clock
 		i_rst, //Reset
 
+	input wire stall_thru, stall_kill,
+
 	// Memory control signals
 	input wire i_mem_read, i_mem_write, i_is_word, i_is_h_or_b, i_is_unsigned_ld, i_reg_write_en,
 	output wire o_mem_read, o_mem_write, o_is_word, o_is_h_or_b, o_is_unsigned_ld, o_reg_write_en,
@@ -25,36 +27,62 @@ module ex_mem_reg(
 	output wire [31:0] o_instruction,
 	output wire o_trap
 );
-
 	// NOP instruction (addi x0, x0, 0) = 32'h00000013
 	localparam [31:0] NOP = 32'h00000013;
 
-	d_ff mem_read_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_mem_read), .q(o_mem_read));
-	d_ff mem_write_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_mem_write), .q(o_mem_write));
-	d_ff is_word_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_is_word), .q(o_is_word));
-	d_ff is_h_or_b_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_is_h_or_b), .q(o_is_h_or_b));
-	d_ff is_unsigned_ld_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_is_unsigned_ld), .q(o_is_unsigned_ld));
-	d_ff reg_write_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_reg_write_en), .q(o_reg_write_en));
+	wire d_mem_read, d_mem_write, d_is_word, d_is_h_or_b, d_is_unsigned_ld, d_reg_write_en;
+	wire [31:0] d_pc, d_new_pc, d_ex_data_out, d_reg_out_1, d_reg_out_2;
+	wire [4:0] d_rs1_addr, d_rs2_addr, d_rd_addr;
+	wire d_rs1_used, d_rs2_used, d_halt, d_valid;
+	wire [31:0] d_instruction;
+	wire d_trap;
 
-	d_ff #(.WIDTH(32)) new_pc_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_new_pc), .q(o_new_pc));
-	d_ff #(.WIDTH(32)) pc_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_pc), .q(o_pc));
+	assign d_mem_read     = stall_kill ? 1'b0 : stall_thru ? o_mem_read     : i_mem_read;
+	assign d_mem_write    = stall_kill ? 1'b0 : stall_thru ? o_mem_write    : i_mem_write;
+	assign d_is_word      = stall_thru | stall_kill ? o_is_word      : i_is_word;
+	assign d_is_h_or_b    = stall_thru | stall_kill ? o_is_h_or_b    : i_is_h_or_b;
+	assign d_is_unsigned_ld = stall_thru | stall_kill ? o_is_unsigned_ld : i_is_unsigned_ld;
+	assign d_reg_write_en = stall_kill ? 1'b0 : stall_thru ? o_reg_write_en : i_reg_write_en;
+	assign d_pc           = stall_thru | stall_kill ? o_pc           : i_pc;
+	assign d_new_pc       = stall_thru | stall_kill ? o_new_pc       : i_new_pc;
+	assign d_ex_data_out  = stall_thru | stall_kill ? o_ex_data_out  : i_ex_data_out;
+	assign d_reg_out_1    = stall_thru | stall_kill ? o_reg_out_1    : i_reg_out_1;
+	assign d_reg_out_2    = stall_thru | stall_kill ? o_reg_out_2	: i_reg_out_2;
+	assign d_rs1_addr     = stall_thru | stall_kill ? o_rs1_addr     : i_rs1_addr;
+	assign d_rs2_addr     = stall_thru | stall_kill ? o_rs2_addr	 : i_rs2_addr;
+	assign d_rd_addr      = stall_thru | stall_kill ? o_rd_addr      : i_rd_addr;
+	assign d_rs1_used     = stall_thru | stall_kill ? o_rs1_used	 : i_rs1_used;
+	assign d_rs2_used     = stall_thru | stall_kill ? o_rs2_used	 : i_rs2_used;
+	assign d_halt         = stall_thru | stall_kill ? o_halt         : i_halt;
+	assign d_valid        = stall_kill ? 1'b0 : stall_thru ? o_valid        : i_valid;
+	assign d_instruction  = stall_kill ? NOP  : stall_thru ? o_instruction  : i_instruction;
+	assign d_trap         = stall_thru | stall_kill ? o_trap         : i_trap;
 
-	d_ff #(.WIDTH(32)) ex_data_out_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_ex_data_out), .q(o_ex_data_out));
-	d_ff #(.WIDTH(32)) reg_out_1_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_reg_out_1), .q(o_reg_out_1));
-	d_ff #(.WIDTH(32)) reg_out_2_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_reg_out_2), .q(o_reg_out_2));
+	d_ff mem_read_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_mem_read), .q(o_mem_read));
+	d_ff mem_write_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_mem_write), .q(o_mem_write));
+	d_ff is_word_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_is_word), .q(o_is_word));
+	d_ff is_h_or_b_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_is_h_or_b), .q(o_is_h_or_b));
+	d_ff is_unsigned_ld_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_is_unsigned_ld), .q(o_is_unsigned_ld));
+	d_ff reg_write_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_reg_write_en), .q(o_reg_write_en));
 
-	d_ff #(.WIDTH(32), .RST_VAL(NOP)) instruction_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_instruction), .q(o_instruction));
+	d_ff #(.WIDTH(32)) new_pc_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_new_pc), .q(o_new_pc));
+	d_ff #(.WIDTH(32)) pc_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_pc), .q(o_pc));
 
-	d_ff rs1_used_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_rs1_used), .q(o_rs1_used));
-	d_ff rs2_used_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_rs2_used), .q(o_rs2_used));
+	d_ff #(.WIDTH(32)) ex_data_out_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_ex_data_out), .q(o_ex_data_out));
+	d_ff #(.WIDTH(32)) reg_out_1_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_reg_out_1), .q(o_reg_out_1));
+	d_ff #(.WIDTH(32)) reg_out_2_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_reg_out_2), .q(o_reg_out_2));
 
-	d_ff halt_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_halt), .q(o_halt));
-	d_ff valid_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_valid), .q(o_valid));
+	d_ff #(.WIDTH(32), .RST_VAL(NOP)) instruction_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_instruction), .q(o_instruction));
+	d_ff rs1_used_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_rs1_used), .q(o_rs1_used));
+	d_ff rs2_used_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_rs2_used), .q(o_rs2_used));
 
-	d_ff trap_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_trap), .q(o_trap));
+	d_ff halt_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_halt), .q(o_halt));
+	d_ff valid_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_valid), .q(o_valid));
 
-	d_ff #(.WIDTH(5)) rs1_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_rs1_addr), .q(o_rs1_addr));
-	d_ff #(.WIDTH(5)) rs2_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_rs2_addr), .q(o_rs2_addr));
-	d_ff #(.WIDTH(5)) rd_dff(.i_rst(i_rst), .i_clk(i_clk), .d(i_rd_addr), .q(o_rd_addr));
+	d_ff trap_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_trap), .q(o_trap));
+
+	d_ff #(.WIDTH(5)) rs1_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_rs1_addr), .q(o_rs1_addr));
+	d_ff #(.WIDTH(5)) rs2_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_rs2_addr), .q(o_rs2_addr));
+	d_ff #(.WIDTH(5)) rd_dff(.i_rst(i_rst), .i_clk(i_clk), .d(d_rd_addr), .q(o_rd_addr));
 
 endmodule

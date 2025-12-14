@@ -17,8 +17,11 @@ module hart #(
     //
     // 32-bit read address for the instruction memory. This is expected to be
     // 4 byte aligned - that is, the two LSBs should be zero.
+    input  wire        i_imem_ready,
     output wire [31:0] o_imem_raddr,
+    output wire        o_imem_ren,
     // Instruction word fetched from memory, available on the same cycle.
+    input  wire        i_imem_valid,
     input  wire [31:0] i_imem_rdata,
     // Data memory accesses go through a separate read/write data memory (dmem)
     // that is shared between read (load) and write (stored). The port accepts
@@ -30,6 +33,7 @@ module hart #(
     // Read/write address for the data memory. This should be 32-bit aligned
     // (i.e. the two LSB should be zero). See `o_dmem_mask` for how to perform
     // half-word and byte accesses at unaligned addresses.
+    input  wire        i_dmem_ready,
     output wire [31:0] o_dmem_addr,
     // When asserted, the memory will perform a read at the aligned address
     // specified by `i_addr` and return the 32-bit word at that address
@@ -61,7 +65,7 @@ module hart #(
     // word right by 16 bits and sign/zero extend as appropriate.
     //
     // To perform a byte write at address 0x00002003, align `o_dmem_addr` to
-    // `0x00002000`, assert `o_dmem_wen`, and set the mask to 0b1000 to
+    // `0x00002003`, assert `o_dmem_wen`, and set the mask to 0b1000 to
     // indicate that only the upper byte should be written. On the next clock
     // cycle, the upper byte of `o_dmem_wdata` will be written to memory, with
     // the other three bytes of the aligned word unaffected. Remember to shift
@@ -72,8 +76,9 @@ module hart #(
     // this will immediately reflect the contents of memory at the specified
     // address, for the bytes enabled by the mask. When read enable is not
     // asserted, or for bytes not set in the mask, the value is undefined.
+    input  wire        i_dmem_valid,
     input  wire [31:0] i_dmem_rdata,
-	// The output `retire` interface is used to signal to the testbench that
+    // The output `retire` interface is used to signal to the testbench that
     // the CPU has completed and retired an instruction. A single cycle
     // implementation will assert this every cycle; however, a pipelined
     // implementation that needs to stall (due to internal hazards or waiting
@@ -119,20 +124,20 @@ module hart #(
     // writeback stage by this instruction. If rd is 5'd0, this field is
     // ignored and can be treated as a don't care.
     output wire [31:0] o_retire_rd_wdata,
+    output wire [31:0] o_retire_dmem_addr,
+    output wire [ 3:0] o_retire_dmem_mask,
+    output wire        o_retire_dmem_ren,
+    output wire        o_retire_dmem_wen,
+    output wire [31:0] o_retire_dmem_rdata,
+    output wire [31:0] o_retire_dmem_wdata,
     // The current program counter of the instruction being retired - i.e.
     // the instruction memory address that the instruction was fetched from.
     output wire [31:0] o_retire_pc,
     // the next program counter after the instruction is retired. For most
     // instructions, this is `o_retire_pc + 4`, but must be the branch or jump
     // target for *taken* branches and jumps.
-    output wire [31:0] o_retire_next_pc,
+    output wire [31:0] o_retire_next_pc
 
-    output wire [31:0] o_retire_dmem_addr,
-    output wire        o_retire_dmem_ren,
-    output wire        o_retire_dmem_wen,
-    output wire  [3:0] o_retire_dmem_mask,
-    output wire [31:0] o_retire_dmem_wdata,
-    output wire [31:0] o_retire_dmem_rdata
 `ifdef RISCV_FORMAL
     ,`RVFI_OUTPUTS,
 `endif
@@ -148,12 +153,33 @@ module hart #(
     wire [4:0] rd_addr_id, rd_addr_ex, rd_addr_mem, rd_addr_wb;
     wire [31:0] reg_out_1_id, reg_out_1_ex, reg_out_1_mem, reg_out_1_wb;
     wire [31:0] reg_out_2_id, reg_out_2_ex, reg_out_2_mem, reg_out_2_wb;
-    wire [31:0] imm_id, imm_ex;
+    wire [31:0] imm_id;
+    wire [31:0] imm_ex;
     wire branch_taken;
     wire stall, prev_stall;
+    wire stall_from_decode;
+    
+    // Cache wiring
+    wire icache_busy, dcache_busy;
+    reg [31:0] icache_addr; 
+    wire [31:0] icache_rdata;
+    wire [31:0]fetch_addr;
+    reg [31:0] prev_addr;
+    wire icache_ren;
+    wire [31:0] dcache_addr_int, dcache_rdata;
+    wire dcache_ren_int, dcache_wen_int;
+    wire [31:0] dcache_wdata_int;
+    wire [3:0] dcache_mask_int, dmem_mask_wb;
+    
+    // Memory interface from caches
+    wire icache_mem_ren, dcache_mem_ren;
+    wire icache_mem_wen, dcache_mem_wen;
+    wire [31:0] icache_mem_addr;
+    wire [31:0] icache_mem_wdata, dcache_mem_wdata;
+    
     wire valid_if, valid_id, valid_ex, valid_mem, valid_wb;
     wire prev_valid_if;
-    wire [31:0] reg_write_data_wb;
+    wire [31:0] reg_write_data_wb, dmem_wdata_wb;
     wire pc_write_trap, mem_trap, decode_trap;
     wire trap_ex, trap_mem, trap_wb;
     wire branch_id, branch_ex;
@@ -176,36 +202,73 @@ module hart #(
     wire is_unsigned_ld_id, is_unsigned_ld_ex, is_unsigned_ld_mem, is_unsigned_ld_wb;
     wire reg_write_en_id, reg_write_en_ex, reg_write_en_mem, reg_write_en_wb;
     wire [31:0] ex_data_out_ex, ex_data_out_mem, ex_data_out_wb;
-    wire [31:0] mem_data_out_wb;
+    wire [31:0] mem_data_out_wb, dmem_addr_wb;
     wire [31:0] rs1_fwd_data, rs2_fwd_data;
 
-    wire [31:0] instruction_in, prev_instruction;
-    wire use_imem_rdata;
+    wire [31:0] instruction_in;
+    reg [31:0] prev_instruction;
+    wire use_icache_rdata;
+    reg prev_icache_busy;
+    reg first_instruction;
+    wire instr_in_valid;
+
+    reg valid_cache;
+    reg prev_dcache_busy, reg_write_en_cache;
+
+    reg [31:0] prev_req_addr, prev_req_wdata;
+    reg [3:0] prev_req_mask;
+
+    reg dcache_miss;
+
+    assign stall = stall_from_decode | icache_busy | dcache_busy | i_rst | dcache_miss;
 
     localparam NOP = 32'h00000013; // NOP instruction (addi x0, x0, 0)
 
-    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) use_imem_rdata_dff (
+    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) use_icache_rdata_dff (
         .i_clk(i_clk),
         .i_rst(i_rst | branch_taken),
         .d(1'b1),
-        .q(use_imem_rdata)
+        .q(use_icache_rdata)
     );
 
-    d_ff prev_stall_dff (
+    d_ff #(.RST_VAL(1'b1)) prev_stall_dff(
         .i_clk(i_clk),
         .i_rst(i_rst | branch_taken),
         .d(stall),
         .q(prev_stall)
     );
 
-    d_ff #(.WIDTH(32), .RST_VAL(NOP)) prev_instruction_dff (
-        .i_clk(i_clk),
-        .i_rst(i_rst | branch_taken),
-        .d(instruction_in),
-        .q(prev_instruction)
-    );
+    always @(negedge icache_busy, posedge i_rst) begin
+        if (i_rst) begin
+            first_instruction <= 1'b1;
+        end else begin
+            first_instruction <= 1'b0;
+        end
+    end
 
-    assign instruction_in =  prev_stall ? prev_instruction : (use_imem_rdata ? i_imem_rdata : NOP); // NOP
+    always @(posedge i_clk) begin
+        if (i_rst) begin
+            prev_icache_busy <= 1'b0;
+        end else begin
+            prev_icache_busy <= icache_busy;
+        end
+    end
+
+    // always @(posedge i_clk) begin
+    //     if (i_rst | first_instruction) begin
+    //         instruction_in <= NOP;
+    //     end else if (!icache_busy) begin
+    //         instruction_in <= icache_rdata;
+    //     end
+    // end
+
+    always @(posedge i_clk) begin
+        if (i_rst | branch_taken) begin
+            prev_instruction <= NOP;
+        end else begin
+            prev_instruction <= instruction_in;
+        end
+    end
 
     // Connect fetch module
     fetch #(.RESET_ADDR(RESET_ADDR)) Fetch(
@@ -214,10 +277,55 @@ module hart #(
         .new_pc(new_pc_ex), 
         .stall(stall),
         .branch_taken(branch_taken),
-        .o_imem_raddr(o_imem_raddr), 
+        .o_imem_raddr(fetch_addr), 
         .pc(pc_if),
         .valid(valid_if)
     );
+
+    /*
+    always @(posedge i_clk) begin
+        if (i_rst) begin
+            prev_addr <= RESET_ADDR;
+        end else if (!stall) begin
+            prev_addr <= fetch_addr;
+        end
+    end
+    */
+
+    assign icache_ren = ~stall & ~i_rst & ~branch_taken;
+    // assign icache_addr = stall ? prev_addr : fetch_addr;
+
+    always @(posedge i_clk) begin
+        if (i_rst) begin
+            icache_addr <= RESET_ADDR;
+        end else if (!stall) begin
+            icache_addr <= fetch_addr;
+        end
+    end
+        
+    // Instruction cache
+    cache icache (
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .i_req_ren(icache_ren),
+        .i_req_wen(1'b0),
+        .i_req_addr(icache_addr),
+        .i_req_wdata(32'h0),
+        .i_req_mask(4'hF),
+        .o_res_rdata(icache_rdata),
+        .o_busy(icache_busy),
+        .o_mem_ren(o_imem_ren),
+        .o_mem_wen(), // Instruction cache never writes
+        .o_mem_addr(o_imem_raddr),
+        .o_mem_wdata(), // Instruction cache never writes
+        .i_mem_rdata(i_imem_rdata),
+        .i_mem_valid(i_imem_valid),
+        .i_mem_ready(i_imem_ready)
+    );
+
+    assign instruction_in = stall ? prev_instruction : (use_icache_rdata ? icache_rdata : NOP); // NOP
+    assign instr_in_valid = stall ? 1'b0 : (use_icache_rdata ? 1'b1 : 1'b0);
+    assign pc_id = stall ? 32'b0 : (use_icache_rdata ? icache_addr : 32'b0);
 
     if_id_reg IF_ID_Reg(
         .i_clk(i_clk),
@@ -225,7 +333,7 @@ module hart #(
         .i_stall(stall),
         .i_flush(branch_taken),
         .i_pc(pc_if),
-        .o_pc(pc_id),
+        .o_pc(),
         .i_valid(valid_if),
         .o_valid(prev_valid_if)
     );
@@ -264,8 +372,8 @@ module hart #(
         .imm_out(imm_id),
         .decode_trap(decode_trap),
         .halt(halt_id),
-        .stall_pipeline(stall),
-        .prev_valid(prev_valid_if),
+        .stall_pipeline(stall_from_decode),
+        .prev_valid(instr_in_valid),
         .valid(valid_id)
     );
 
@@ -276,7 +384,7 @@ module hart #(
         .o_rs1_rdata (reg_out_1_id),
         .i_rs2_raddr (rs2_addr_id),
         .o_rs2_rdata (reg_out_2_id),
-        .i_rd_wen    (reg_write_en_wb),
+        .i_rd_wen    ((!dcache_busy & prev_dcache_busy) ? reg_write_en_cache : reg_write_en_wb),
         .i_rd_waddr  (rd_addr_wb),
         .i_rd_wdata  (reg_write_data_wb)
     );
@@ -284,7 +392,8 @@ module hart #(
     id_ex_reg ID_EX_Reg(
         .i_clk(i_clk),
         .i_rst(i_rst),
-        .i_stall(stall),
+        .stall_thru(dcache_busy | dcache_miss),
+        .stall_kill(icache_busy | stall_from_decode ),
         .i_flush(branch_taken),
         .i_reg_out_1(reg_out_1_id),
         .o_reg_out_1(reg_out_1_ex),
@@ -384,12 +493,15 @@ module hart #(
         .rs1_used(rs1_used_ex),
         .rs2_used(rs2_used_ex),
         .o_rs1_fwd_data(rs1_fwd_data),
-        .o_rs2_fwd_data(rs2_fwd_data)
+        .o_rs2_fwd_data(rs2_fwd_data),
+        .valid(valid_ex)
     );
 
     ex_mem_reg EX_MEM_Reg(
         .i_clk(i_clk),
         .i_rst(i_rst),
+        .stall_thru(dcache_busy | dcache_miss),
+        .stall_kill(1'b0),
         .i_pc(pc_ex),
         .o_pc(pc_mem),
         .i_new_pc(new_pc_ex),
@@ -432,7 +544,7 @@ module hart #(
         .o_trap(trap_mem)
     );
 
-    memory Memory(
+    memory_sub Memory(
         .i_clk(i_clk),
         .i_rst(i_rst),
         .w_data(reg_out_2_mem),
@@ -442,18 +554,99 @@ module hart #(
         .is_word(is_word_mem),
         .is_h_or_b(is_h_or_b_mem),
         .is_unsigned_ld(is_unsigned_ld_mem),
-        .i_dmem_rdata(i_dmem_rdata),
-        .o_dmem_addr(o_dmem_addr),
-        .o_dmem_ren(o_dmem_ren),
-        .o_dmem_wen(o_dmem_wen),
-        .o_dmem_wdata(o_dmem_wdata),
-        .o_dmem_mask(o_dmem_mask),
+        .i_dmem_rdata(dcache_rdata),
+        .o_dmem_addr(dcache_addr_int),
+        .o_dmem_ren(dcache_ren_int),
+        .o_dmem_wen(dcache_wen_int),
+        .o_dmem_wdata(dcache_wdata_int),
+        .o_dmem_mask(dcache_mask_int),
         .mem_trap(mem_trap)
     );
+    
+    // Data cache
+    cache dcache (
+        .i_clk(i_clk),
+        .i_rst(i_rst),
+        .i_req_ren(dcache_busy ? 1'b0 : dcache_ren_int),
+        .i_req_wen(dcache_busy ? 1'b0 : dcache_wen_int),
+        .i_req_addr((dcache_miss) ? prev_req_addr : dcache_addr_int),
+        .i_req_wdata((dcache_miss) ? prev_req_wdata : dcache_wdata_int),
+        .i_req_mask((dcache_miss) ? prev_req_mask : dcache_mask_int),
+        .o_res_rdata(dcache_rdata),
+        .o_busy(dcache_busy),
+        .o_mem_ren(o_dmem_ren),
+        .o_mem_wen(o_dmem_wen),
+        .o_mem_addr(o_dmem_addr),
+        .o_mem_wdata(o_dmem_wdata),
+        .i_mem_rdata(i_dmem_rdata),
+        .i_mem_valid(i_dmem_valid),
+        .i_mem_ready(i_dmem_ready)
+    );
+
+    always @(posedge i_clk) begin
+        if (i_rst) begin
+            prev_req_addr <= 32'd0;
+        end else if (!dcache_busy) begin
+            prev_req_addr <= dcache_addr_int;
+        end
+    end
+
+    always @(posedge i_clk) begin
+        if (i_rst) begin
+            prev_req_wdata <= 32'd0;
+        end else if (!dcache_busy) begin
+            prev_req_wdata <= dcache_wdata_int;
+        end
+    end
+
+    always @(posedge i_clk) begin
+        if (i_rst) begin
+            prev_req_mask <= 4'd0;
+        end else if (!dcache_busy) begin
+            prev_req_mask <= dcache_mask_int;
+        end
+    end
+
+    always @(posedge i_clk) begin
+        if (i_rst) begin
+            valid_cache <= 1'b0;
+        end else if (!dcache_busy) begin
+            valid_cache <= valid_mem;
+        end
+    end
+
+    
+    always @(posedge i_clk) begin
+        if (i_rst) begin
+            reg_write_en_cache <= 1'b0;
+        end else if (!dcache_busy) begin
+            reg_write_en_cache <= reg_write_en_mem;
+        end
+    end
+
+    always @(posedge i_clk) begin
+        if (i_rst) begin
+            prev_dcache_busy <= 1'b0;
+        end else begin
+            prev_dcache_busy <= dcache_busy;
+        end
+    end
+
+    always @(posedge i_clk) begin
+        if (i_rst) begin
+            dcache_miss <= 1'b0;
+        end else if (dcache_busy & !prev_dcache_busy) begin
+            dcache_miss <= 1'b1;
+        end else if (!dcache_busy & prev_dcache_busy) begin
+            dcache_miss <= 1'b0;
+        end
+    end
 
     mem_wb_reg MEM_WB_Reg(
         .i_clk(i_clk),
         .i_rst(i_rst),
+        .stall_thru(1'b0),
+        .stall_kill(dcache_busy),
         .i_pc(pc_mem),
         .o_pc(pc_wb),
         .i_new_pc(new_pc_mem),
@@ -484,16 +677,16 @@ module hart #(
         .o_valid(valid_wb),
         .i_instruction(instruction_mem),
         .o_instruction(instruction_wb),
-        .i_dmem_addr(o_dmem_addr),
-        .i_dmem_mask(o_dmem_mask),
-        .i_dmem_ren(o_dmem_ren),
-        .i_dmem_wen(o_dmem_wen),
-        .i_dmem_wdata(o_dmem_wdata),
-        .o_dmem_addr(o_retire_dmem_addr),
+        .i_dmem_addr(dcache_addr_int),
+        .i_dmem_mask(dcache_mask_int),
+        .i_dmem_ren(dcache_ren_int),
+        .i_dmem_wen(dcache_wen_int),
+        .i_dmem_wdata(dcache_wdata_int),
+        .o_dmem_addr(dmem_addr_wb),
         .o_dmem_ren(o_retire_dmem_ren),
         .o_dmem_wen(o_retire_dmem_wen),
-        .o_dmem_mask(o_retire_dmem_mask),
-        .o_dmem_wdata(o_retire_dmem_wdata),
+        .o_dmem_mask(dmem_mask_wb),
+        .o_dmem_wdata(dmem_wdata_wb),
         .i_is_word(is_word_mem),
         .o_is_word(is_word_wb),
         .i_is_h_or_b(is_h_or_b_mem),
@@ -509,15 +702,13 @@ module hart #(
         .i_rst(i_rst),
         .mem_read(mem_read_wb),
         .ex_data_out(ex_data_out_wb),
-        .i_dmem_rdata(i_dmem_rdata),
+        .i_dmem_rdata(dcache_rdata),
         .is_word(is_word_wb),
         .is_h_or_b(is_h_or_b_wb),
         .is_unsigned_ld(is_unsigned_ld_wb),
         .reg_write_data(reg_write_data_wb),
         .mem_data_out(mem_data_out_wb)
     );
-
-    // TODO: Connect writeback outputs to retire outputs
 
     assign o_retire_rs1_raddr = rs1_used_wb ? rs1_addr_wb : 5'd0;
     assign o_retire_rs2_raddr = rs2_used_wb ? rs2_addr_wb : 5'd0;
@@ -529,13 +720,15 @@ module hart #(
     assign o_retire_inst = instruction_wb;
     assign o_retire_pc = pc_wb;
 
-    assign o_retire_valid = valid_wb;
+    assign o_retire_valid = (!dcache_busy && prev_dcache_busy) ? valid_cache : (dcache_busy && !prev_dcache_busy) ? 1'b0 : valid_wb;
     assign o_retire_next_pc = new_pc_wb;
     assign o_retire_trap = trap_wb;
     assign o_retire_halt = halt_wb;
 
-    assign o_retire_dmem_rdata = i_dmem_rdata;
-
+    assign o_retire_dmem_rdata = dcache_rdata;
+    assign o_retire_dmem_mask = dmem_mask_wb;
+    assign o_retire_dmem_wdata = dmem_wdata_wb;
+    assign o_retire_dmem_addr = dmem_addr_wb;
 endmodule
 
 `default_nettype wire

@@ -101,20 +101,35 @@ module cache (
     reg cache_written, mem_written;
     reg done;
     wire in_0, in_1;
-    reg was_write;
-    reg idled_first_cycle;
-    reg idled_first, should_idle;
+    reg was_write, prev_ren, prev_wen;
+    reg initialized;
+    reg prev_mem_ready, prev_mem_valid;
 
     integer i;
     integer j;
 
     reg next_word;
-    reg [1:0] read_word_cnt, read_word_cnt_prev;
+    reg [1:0] read_word_cnt, read_word_cnt_prev, write_word_cnt;
 
     localparam IDLE = 2'b00;
     localparam EVAL = 2'b01;
     localparam MEM_READ = 2'b10;
     localparam MEM_WRITE = 2'b11;
+
+    always @(posedge i_clk) begin
+        prev_mem_ready <= i_mem_ready;
+    end
+
+    always @(posedge i_clk) begin
+        prev_mem_valid <= i_mem_valid;
+    end
+
+    always @(posedge i_clk) begin
+        prev_ren <= i_req_ren;
+    end
+    always @(posedge i_clk) begin
+        prev_wen <= i_req_wen;
+    end
     
     always @(posedge i_clk) begin
         if (i_rst) begin
@@ -127,8 +142,16 @@ module cache (
     always @(posedge i_clk) begin
         if (i_rst) begin
             read_word_cnt <= 2'b00;
-        end else if (next_word) begin
+        end else if ((state == MEM_READ) & (prev_mem_ready & ~i_mem_ready) & (write_word_cnt != D - 1)) begin
             read_word_cnt <= read_word_cnt + 1'b1;
+        end
+    end
+
+    always @(posedge i_clk) begin
+        if (i_rst) begin
+            write_word_cnt <= 2'b00;
+        end else if (state == MEM_READ && i_mem_valid) begin
+            write_word_cnt <= write_word_cnt + 1'b1;
         end
     end
 
@@ -157,20 +180,20 @@ module cache (
     end
 
     always @(posedge i_clk) begin
-        if (i_req_wen) begin
-             was_write <= 1'b1;
+        if (i_rst) begin
+            was_write <= 1'b0;
+        end else if (i_req_wen) begin
+            was_write <= 1'b1;
         end else if (i_req_ren) begin
-             was_write <= 1'b0;
+            was_write <= 1'b0;
         end
     end
 
     always @(posedge i_clk) begin
         if (i_rst) begin
-            idled_first_cycle = 1'b1;
-        end else if (idled_first) begin
-            idled_first_cycle = 1'b1;
-        end else if (should_idle) begin
-            idled_first_cycle = 1'b0;
+            initialized <= 1'b0;
+        end else if (state == IDLE && (i_req_ren | i_req_wen)) begin
+            initialized <= 1'b1;
         end
     end
 
@@ -186,21 +209,16 @@ module cache (
         cache_write = 1'b0;
         mem_write = 1'b0;
         first_mem_read = 1'b0;
-        idled_first = 1'b0;
-        should_idle = 1'b0;
 
         if (state == IDLE) begin
             done = 1'b1;
-            // if (~idled_first_cycle) begin
-            //     idled_first = 1'b1;
-            // end else 
             if (i_req_ren | i_req_wen) begin
                 next_state = EVAL;
                 eval_hit = 1'b1;
             end
         end else if (state == EVAL) begin
             eval_hit = 1'b1;
-            if (~hit) begin
+            if (~hit & (prev_ren | prev_wen)) begin
                 if (i_mem_ready) begin
                     next_state = MEM_READ;
                     first_mem_read = 1'b1;
@@ -210,42 +228,29 @@ module cache (
                 done = 1'b1;
             end else begin
                 done = 1'b1;
-                // next_state = IDLE;
-                should_idle = 1'b1;
             end
         end else if (state == MEM_READ) begin
-            if (i_mem_valid & (read_word_cnt == D - 1)) begin
+            if (i_mem_valid & (write_word_cnt == D - 1)) begin
                 if (was_write) begin
                     next_state = MEM_WRITE;
                 end else begin
                     next_state = IDLE;
                     update_lru = 1'b1;
-                    should_idle = 1'b1;
                 end
                 update_data = 1'b1;
                 next_word = 1'b1;
-            end else if (i_mem_valid && (read_word_cnt == D - 2)) begin
+            end else if (i_mem_valid && (write_word_cnt == D - 2)) begin
                 update_data = 1'b1;
                 update_tag = 1'b1;
                 update_valid = 1'b1;
                 next_word = 1'b1;
-            end else if (i_mem_valid & (read_word_cnt != D - 1)) begin
+            end else if (i_mem_valid & (write_word_cnt != D - 1)) begin
                 next_word = 1'b1;
                 update_data = 1'b1;
             end
-
         end else if (state == MEM_WRITE) begin
             update_lru = 1'b1;
             next_state = IDLE;
-            // if (~cache_written) begin
-            //     cache_write = 1'b1;
-            // end else if (cache_written & ~mem_written) begin
-            //     mem_write = 1'b1;
-            // end else if (cache_written & mem_written) begin
-            //     next_state = IDLE;
-            //     update_lru = 1'b1;
-            //     should_idle = 1'b1;
-            // end
         end
     end
 
@@ -255,7 +260,7 @@ module cache (
     assign hit = in_0 || in_1;
 
     // Busy is high on miss, tag in corresponding cache line does not match request address
-    assign o_busy = (~hit | ~done);
+    assign o_busy = (!hit || !done) && initialized && !(state == EVAL && (!prev_ren & !prev_wen)) && (state != IDLE);
 
     assign o_res_rdata = i_req_addr[31:S+O] == tags0[i_req_addr[O+S-1:O]] ? datas0[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] :
                          i_req_addr[31:S+O] == tags1[i_req_addr[O+S-1:O]] ? datas1[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] :
@@ -263,8 +268,8 @@ module cache (
 
     // Memory read/write logic
     assign o_mem_addr = {i_req_addr[31:O], read_word_cnt, 2'b00};
-    assign o_mem_ren  = (read_word_cnt != read_word_cnt_prev && state == MEM_READ) || first_mem_read;
-    assign o_mem_wen  = hit & was_write;
+    assign o_mem_ren  = ((~prev_mem_ready & i_mem_ready) && state == MEM_READ) || first_mem_read;
+    assign o_mem_wen  = hit & was_write; // TODO: Check is memory is ready, store until ready
     assign o_mem_wdata = (in_0) ? (datas0[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) 
                                 : (datas1[i_req_addr[O+S-1:O]][i_req_addr[O-1:2]] & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} })           ;
 
@@ -298,17 +303,17 @@ module cache (
     end
 
     always @(posedge i_clk) begin
-        if (update_data & (!was_write || read_word_cnt != i_req_addr[O-1:2])) begin
+        if (update_data & (!was_write || write_word_cnt != i_req_addr[O-1:2])) begin
             if (lru[i_req_addr[O+S-1:O]] == 1'b0) begin
-                datas0[i_req_addr[O+S-1:O]][read_word_cnt] <= i_mem_rdata;
+                datas0[i_req_addr[O+S-1:O]][write_word_cnt] <= i_mem_rdata;
             end else begin
-                datas1[i_req_addr[O+S-1:O]][read_word_cnt] <= i_mem_rdata;
+                datas1[i_req_addr[O+S-1:O]][write_word_cnt] <= i_mem_rdata;
             end
-        end else if (update_data & was_write & read_word_cnt == i_req_addr[O-1:2]) begin
+        end else if (update_data & was_write & write_word_cnt == i_req_addr[O-1:2]) begin
             if (lru[i_req_addr[O+S-1:O]] == 1'b0) begin
-                datas0[i_req_addr[O+S-1:O]][read_word_cnt] <= (i_mem_rdata & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} });
+                datas0[i_req_addr[O+S-1:O]][write_word_cnt] <= (i_mem_rdata & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} });
             end else begin
-                datas1[i_req_addr[O+S-1:O]][read_word_cnt] <= (i_mem_rdata & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} });
+                datas1[i_req_addr[O+S-1:O]][write_word_cnt] <= (i_mem_rdata & ~{ {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} }) | (i_req_wdata & { {8{i_req_mask[3]}}, {8{i_req_mask[2]}}, {8{i_req_mask[1]}}, {8{i_req_mask[0]}} });
             end
         end else if (hit & i_req_wen) begin
             if (in_0) begin

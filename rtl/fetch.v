@@ -5,7 +5,7 @@ module fetch #(parameter RESET_ADDR = 32'h00000000)(
     input stall,  // Stall signal from hazard detection (hold PC and instruction)
     output [31:0] o_imem_raddr,
     output reg [31:0] pc,
-    output valid
+    output wire valid
 );
 
     wire [31:0] next_pc;
@@ -21,7 +21,7 @@ module fetch #(parameter RESET_ADDR = 32'h00000000)(
             pc <= next_pc;  
     end
 
-    assign valid = ~stall;
+    assign valid = 1'b1; 
 
     // set o_imem_raddr to current pc (so it can be used to fetch instruction in hart.v)
     assign o_imem_raddr = pc;
