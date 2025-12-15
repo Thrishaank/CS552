@@ -1,12 +1,12 @@
 `default_nettype none
-
 ////////////PLEASE DELETE/ ADD SIGNALS AS NECESSARY/////////////
 // ID/EX Pipeline Register
 // Holds data between Decode and Execute stages
 module id_ex_reg (
     input  wire        i_clk,
     input  wire        i_rst,
-    input  wire        i_stall,       // Stall signal to hold current values
+    input  wire        stall_thru,       // Stall signal to hold current values
+    input  wire        stall_kill,       // Stall signal to hold current values    
     input  wire        i_flush,       // Flush signal to clear pipeline register
     
     // Data path signals from ID stage (Decode)
@@ -94,7 +94,6 @@ module id_ex_reg (
     output wire        o_valid
 );
 
-    // NOP parameter - needed for stall handling
     localparam [31:0] NOP = 32'h00000013; // NOP instruction (addi x0, x0, 0)
 
     // Internal wires for mux outputs (D inputs to flip-flops)
@@ -106,7 +105,7 @@ module id_ex_reg (
     wire        d_mem_read, d_mem_write, d_is_word, d_is_h_or_b, d_is_unsigned_ld;
     
     // ALU control
-    wire        d_reg_write, d_imm_alu, d_i_arith, d_i_unsigned, d_i_sub;
+    wire        d_reg_write_en, d_imm_alu, d_i_arith, d_i_unsigned, d_i_sub;
     wire [ 2:0] d_i_opsel;
     wire        d_is_auipc, d_is_lui;
     
@@ -114,7 +113,9 @@ module id_ex_reg (
     wire        d_branch, d_jump, d_is_jalr, d_check_lt_or_eq, d_branch_expect_n;
     
     // Exception/Control
-    wire        d_trap, d_halt;
+    wire        d_trap, d_halt, d_valid;
+
+    wire [31:0] d_instruction;
     
     // Reset signal: combine rst and flush (clear pipeline bubble on flush)
     wire rst_or_flush;
@@ -125,41 +126,44 @@ module id_ex_reg (
     // ====================================================================
     
     // Data path signals
-    assign d_pc          = i_stall ? o_pc         : i_pc;
-    assign d_reg_out_1   = i_stall ? o_reg_out_1  : i_reg_out_1;
-    assign d_reg_out_2   = i_stall ? o_reg_out_2  : i_reg_out_2;
-    assign d_imm         = i_stall ? o_imm        : i_imm;
-    assign d_rs1_addr    = i_stall ? 5'h0         : i_rs1_addr;
-    assign d_rs2_addr    = i_stall ? 5'h0         : i_rs2_addr;
-    assign d_rd_addr     = i_stall ? 1'b0         : i_rd_addr;
-    
+    assign d_pc          = stall_thru | stall_kill ? o_pc         : i_pc;
+    assign d_reg_out_1   = stall_thru | stall_kill ? o_reg_out_1  : i_reg_out_1;
+    assign d_reg_out_2   = stall_thru | stall_kill ? o_reg_out_2  : i_reg_out_2;
+    assign d_imm         = stall_thru | stall_kill ? o_imm        : i_imm;
+    assign d_rs1_addr    = stall_thru ? o_rs1_addr : stall_kill ? 5'h0         : i_rs1_addr;
+    assign d_rs2_addr    = stall_thru ? o_rs2_addr : stall_kill ? 5'h0         : i_rs2_addr;
+    assign d_rd_addr     = stall_thru ? o_rd_addr  : stall_kill ? 5'h0         : i_rd_addr;
+
+
     // Memory control signals
-    assign d_mem_read       = i_stall ? 1'b0      : i_mem_read;
-    assign d_mem_write      = i_stall ? 1'b0      : i_mem_write;
-    assign d_is_word        = i_stall ? o_is_word        : i_is_word;
-    assign d_is_h_or_b      = i_stall ? o_is_h_or_b      : i_is_h_or_b;
-    assign d_is_unsigned_ld = i_stall ? o_is_unsigned_ld : i_is_unsigned_ld;
+    assign d_mem_read       = stall_thru ? o_mem_read : stall_kill ? 1'b0 : i_mem_read;
+    assign d_mem_write      = stall_thru ? o_mem_write : stall_kill ? 1'b0 : i_mem_write;
+    assign d_is_word        = stall_thru | stall_kill ? o_is_word        : i_is_word;
+    assign d_is_h_or_b      = stall_thru | stall_kill ? o_is_h_or_b      : i_is_h_or_b;
+    assign d_is_unsigned_ld = stall_thru | stall_kill ? o_is_unsigned_ld : i_is_unsigned_ld;
     
     // ALU control signals
-    assign d_reg_write  = i_stall ? 1'b0  : i_reg_write_en;
-    assign d_imm_alu    = i_stall ? o_imm_alu    : i_imm_alu;
-    assign d_i_arith    = i_stall ? o_i_arith    : i_i_arith;
-    assign d_i_unsigned = i_stall ? o_i_unsigned : i_i_unsigned;
-    assign d_i_sub      = i_stall ? o_i_sub      : i_i_sub;
-    assign d_i_opsel    = i_stall ? o_i_opsel    : i_i_opsel;
-    assign d_is_auipc   = i_stall ? o_is_auipc   : i_is_auipc;
-    assign d_is_lui     = i_stall ? o_is_lui     : i_is_lui;
+    assign d_reg_write_en  = stall_thru ? o_reg_write_en : stall_kill ? 1'b0 : i_reg_write_en;
+    assign d_imm_alu    = stall_thru | stall_kill ? o_imm_alu    : i_imm_alu;
+    assign d_i_arith    = stall_thru | stall_kill ? o_i_arith    : i_i_arith;
+    assign d_i_unsigned = stall_thru | stall_kill ? o_i_unsigned : i_i_unsigned;
+    assign d_i_sub      = stall_thru | stall_kill ? o_i_sub      : i_i_sub;
+    assign d_i_opsel    = stall_thru | stall_kill ? o_i_opsel    : i_i_opsel;
+    assign d_is_auipc   = stall_thru | stall_kill ? o_is_auipc   : i_is_auipc;
+    assign d_is_lui     = stall_thru | stall_kill ? o_is_lui     : i_is_lui;
     
     // Branch/Jump control signals
-    assign d_branch          = i_stall ? o_branch          : i_branch;
-    assign d_jump            = i_stall ? o_jump            : i_jump;
-    assign d_is_jalr        = i_stall ? o_is_jalr        : i_is_jalr;
-    assign d_check_lt_or_eq  = i_stall ? o_check_lt_or_eq  : i_check_lt_or_eq;
-    assign d_branch_expect_n = i_stall ? o_branch_expect_n : i_branch_expect_n;
+    assign d_branch          = stall_thru | stall_kill ? o_branch          : i_branch;
+    assign d_jump            = stall_thru | stall_kill ? o_jump            : i_jump;
+    assign d_is_jalr        = stall_thru | stall_kill ? o_is_jalr        : i_is_jalr;
+    assign d_check_lt_or_eq  = stall_thru | stall_kill ? o_check_lt_or_eq  : i_check_lt_or_eq;
+    assign d_branch_expect_n = stall_thru | stall_kill ? o_branch_expect_n : i_branch_expect_n;
     
     // Exception/Control signals
-    assign d_trap = i_stall ? o_trap : i_trap;
-    assign d_halt        = i_stall ? o_halt        : i_halt;
+    assign d_trap = stall_thru | stall_kill ? o_trap : i_trap;
+    assign d_halt        = stall_thru | stall_kill ? o_halt        : i_halt;
+    assign d_valid    = stall_thru ? o_valid : stall_kill ? 1'b0 : i_valid;
+    assign d_instruction = stall_thru ? o_instruction : stall_kill ? NOP : i_instruction;
     
     // ====================================================================
     // D Flip-Flop Instantiations
@@ -170,7 +174,7 @@ module id_ex_reg (
     d_ff #(.WIDTH(32), .RST_VAL(32'h00000000)) ff_reg_out_1 (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_reg_out_1), .q(o_reg_out_1));
     d_ff #(.WIDTH(32), .RST_VAL(32'h00000000)) ff_reg_out_2 (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_reg_out_2), .q(o_reg_out_2));
     d_ff #(.WIDTH(32), .RST_VAL(32'h00000000)) ff_imm       (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_imm),       .q(o_imm));
-    d_ff #(.WIDTH(32), .RST_VAL(32'h00000013)) ff_instruction (.i_clk(i_clk), .i_rst(rst_or_flush), .d(i_stall ? NOP : i_instruction), .q(o_instruction));
+    d_ff #(.WIDTH(32), .RST_VAL(NOP)) ff_instruction (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_instruction), .q(o_instruction));
 
     // Address flip-flops (5-bit) - for forwarding unit
     d_ff #(.WIDTH(5), .RST_VAL(5'h00)) ff_rs1_addr (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_rs1_addr), .q(o_rs1_addr));
@@ -185,7 +189,7 @@ module id_ex_reg (
     d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_is_unsigned_ld (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_is_unsigned_ld), .q(o_is_unsigned_ld));
     
     // ALU control flip-flops
-    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_reg_write  (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_reg_write),  .q(o_reg_write_en));
+    d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_reg_write  (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_reg_write_en),  .q(o_reg_write_en));
     d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_imm_alu    (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_imm_alu),    .q(o_imm_alu));
     d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_i_arith    (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_i_arith),    .q(o_i_arith));
     d_ff #(.WIDTH(1), .RST_VAL(1'b0)) ff_i_unsigned (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_i_unsigned), .q(o_i_unsigned));
@@ -209,7 +213,7 @@ module id_ex_reg (
     // Exception/Control flip-flops
     d_ff ff_trap (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_trap), .q(o_trap));
     d_ff ff_halt        (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_halt),        .q(o_halt));
-    d_ff ff_valid       (.i_clk(i_clk), .i_rst(rst_or_flush), .d(i_stall ? 1'b0 : i_valid), .q(o_valid));
+    d_ff ff_valid       (.i_clk(i_clk), .i_rst(rst_or_flush), .d(d_valid), .q(o_valid));
 
 endmodule
 

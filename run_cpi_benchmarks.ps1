@@ -1,0 +1,138 @@
+# CS552 CPI Benchmark Runner
+# Automated script to run all benchmarks and extract CPI values
+
+param(
+    [string]$BenchmarkDir = "benchmarks",
+    [string]$ResultsDir = "cpi_results",
+    [int]$MaxCycles = 100000
+)
+
+if (!(Test-Path $ResultsDir)) {
+    New-Item -ItemType Directory -Path $ResultsDir | Out-Null
+}
+if (!(Test-Path $ResultsDir)) {
+    New-Item -ItemType Directory -Path $ResultsDir | Out-Null
+}
+
+# Function to run a single benchmark
+function Extract-CPI {
+    param([string]$LogFile)
+    if (!(Test-Path $LogFile)) { return "" }
+    $lines = Get-Content $LogFile
+    foreach ($line in $lines) {
+            if ($line -match "^\s*#?\s*CPI[:=]\s*([0-9.]+)") {
+            return $matches[1]
+        }
+    }
+    return ""
+}
+
+# Function to run a single benchmark
+function Run-Benchmark {
+    param(
+        [string]$Name,
+        [string]$HexFile,
+        [string]$Phase,
+        [string]$OutputLog
+    )
+
+    Write-Host ("Running {0}: {1}..." -f $Phase, $Name) -NoNewline
+
+    # Use .mem file for simulation
+
+        # Use .hex file for simulation
+        if (!(Test-Path $HexFile)) {
+            Write-Host " [SKIP - .hex file not found]"
+            return
+        }
+
+        # Run simulation with +program argument
+            $simCmd = @"
+vlib work 2>&1 | Out-Null
+vlog rtl/*.v 2>&1 | Out-Null  
+vlog tb/tb.v 2>&1 | Out-Null
+     vsim -c hart_tb -do 'run ${MaxCycles}ns; quit -f' -sv_seed random +program=$HexFile 2>&1
+"@
+        $result = Invoke-Expression $simCmd
+        $result | Out-File $OutputLog
+
+    $cpi = Extract-CPI $OutputLog
+    Write-Host " [CPI: $cpi]"
+
+    return $cpi
+}
+
+# Results table
+$results = @{}
+
+# Compile processor once
+Write-Host "Compiling processor..." -ForegroundColor Yellow
+Push-Location (Split-Path -Parent $PSCommandPath)
+
+Remove-Item -Recurse -Force work -ErrorAction SilentlyContinue
+vlib work | Out-Null
+vlog rtl/*.v 2>&1 | Out-Null
+vlog tb/tb.v 2>&1 | Out-Null
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Compilation failed!" -ForegroundColor Red
+    Pop-Location
+    exit 1
+}
+
+Write-Host "Compilation successful!" -ForegroundColor Green
+Write-Host ""
+
+# Run all benchmarks
+ $benchmarks = @(
+     'image_filter',
+     'hash_lookup',
+     'bubblesort_large',
+     'matmul_4x4'
+ )
+foreach ($bench in $benchmarks) {
+    Write-Host "=== Benchmark: $bench ===" -ForegroundColor Cyan
+    
+    # Baseline (Phase 5)
+    $hexFile = Join-Path $BenchmarkDir "$bench.hex"
+    $logFile = Join-Path $ResultsDir "${bench}_baseline.log"
+    $cpi_baseline = Run-Benchmark -Name $bench -HexFile $hexFile -Phase "Baseline" -OutputLog $logFile
+    
+    # Cache (Phase 6) - same hex file, just different processor config
+    $logFile = Join-Path $ResultsDir "${bench}_cache.log"
+    $cpi_cache = Run-Benchmark -Name $bench -HexFile $hexFile -Phase "Cache   " -OutputLog $logFile
+    
+    $results[$bench] = @{
+        Baseline = $cpi_baseline
+        Cache = $cpi_cache
+    }
+    
+    Write-Host ""
+}
+
+
+# Generate table
+Write-Host "=== CPI RESULTS TABLE ==="
+Write-Host ""
+
+$table = ""
+$table += "+------------------------+---------------+---------------+------------------+--------------+`n"
+$table += "`| CPI table              `| Image_filter  `| hash_lookup   `| bubblesort_large `| matmul_4x4   `|`n"
+$table += "+------------------------+---------------+---------------+------------------+--------------+`n"
+$table += "`| Baseline without       `|               `|               `|                  `|              `|`n"
+$table += "`| cache (phase 5)        `| " + $results['image_filter'].Baseline.PadRight(13) + " `| " + $results['hash_lookup'].Baseline.PadRight(13) + " `| " + $results['bubblesort_large'].Baseline.PadRight(16) + " `| " + $results['matmul_4x4'].Baseline.PadRight(12) + " `|`n"
+$table += "+------------------------+---------------+---------------+------------------+--------------+`n"
+$table += "`| Baseline with          `|               `|               `|                  `|              `|`n"
+$table += "`| cache (phase 6)        `| " + $results['image_filter'].Cache.PadRight(13) + " `| " + $results['hash_lookup'].Cache.PadRight(13) + " `| " + $results['bubblesort_large'].Cache.PadRight(16) + " `| " + $results['matmul_4x4'].Cache.PadRight(12) + " `|`n"
+$table += "+------------------------+---------------+---------------+------------------+--------------+"
+
+Write-Host $table
+Write-Host ""
+
+# Save to file
+$table | Out-File (Join-Path $ResultsDir "cpi_table.txt")
+
+Write-Host ("Results saved to: {0}" -f (Join-Path $ResultsDir 'cpi_table.txt'))
+
+Pop-Location
+

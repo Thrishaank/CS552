@@ -25,6 +25,7 @@ module execute (
     input [4:0] rs2_addr, // R2 number
     input [4:0] ex_mem_dest_addr, // RD value for EX/MEM
     input [4:0] mem_wb_dest_addr, // RD value for MEM/WB
+    input valid, // Instruction valid signal
     output wire [31:0] o_rs1_fwd_data, o_rs2_fwd_data, // Forwarded data outputs for retire
     output wire pc_write_trap,
     output [31:0] new_pc, // New PC
@@ -50,7 +51,7 @@ module execute (
     assign pc_plus_offset = (jump | branch_taken) ? 
                     (pc_plus_imm) : (pc_plus4);
 
-    assign o_branch_taken = branch_taken | jump;
+    assign o_branch_taken = (branch_taken | jump) & valid;
 
     assign new_pc = (is_jalr) ? {result[31:1], 1'b0} : pc_plus_offset;
 
